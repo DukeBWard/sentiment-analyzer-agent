@@ -8,7 +8,8 @@ const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY,
 })
 
-const DEFAULT_TICKERS = ['AAPL', 'MSFT', 'GOOGL']
+const DEFAULT_TICKERS = ['AAPL', 'MSFT', 'GOOGL', 'AMZN', 'META']
+
 
 type TimeRange = '1d' | '5d' | '1mo' | '1y'
 const VALID_TIME_RANGES: TimeRange[] = ['1d', '5d', '1mo', '1y']
@@ -167,7 +168,7 @@ async function scrapeStockNews(tickers: string[]): Promise<NewsItem[]> {
             new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout')), 3000))
           ]).then(result => result as YahooQuote),
           Promise.race([
-            yahooFinance.search(ticker, { newsCount: 2 }), // Reduced news count
+            yahooFinance.search(ticker, { newsCount: 5 }), // Reduced news count
             new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout')), 3000))
           ]).then(result => result as YahooSearchResponse)
         ]);
