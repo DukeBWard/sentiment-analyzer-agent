@@ -4,12 +4,11 @@ import OpenAI from 'openai'
 import axios from 'axios'
 import yahooFinance from 'yahoo-finance2'
 
+const DEFAULT_TICKERS = ['AAPL', 'MSFT', 'GOOGL', 'AMZN', 'META']
+
 const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY,
 })
-
-const DEFAULT_TICKERS = ['AAPL', 'MSFT', 'GOOGL', 'AMZN', 'META']
-
 
 type TimeRange = '1d' | '5d' | '1mo' | '1y'
 const VALID_TIME_RANGES: TimeRange[] = ['1d', '5d', '1mo', '1y']
@@ -30,12 +29,6 @@ type SentimentItem = {
 type ChartData = { 
   timestamp: string
   price: number | null 
-}
-
-type YahooQuote = {
-  regularMarketPrice: number;
-  regularMarketChange: number;
-  regularMarketChangePercent: number;
 }
 
 type YahooChartResponse = {
@@ -71,30 +64,34 @@ type StockDataResult = {
     revenueGrowth?: number;
     profitMargin?: number;
   };
+};
+
+type CombinedSentiment = {
+  stock: string
+  headline: string
+  sentimentScore: number
+  articles?: Array<{
+    headline: string
+    sentimentScore: number
+    url?: string
+  }>
+  count?: number
+  totalSentiment?: number
+  stockData: StockDataResult | null
 }
 
-type YahooSearchResponse = {
-  news?: Array<{
-    title: string;
-    link?: string;
-  }>;
+type StockResult = {
+  ticker: string
+  stockData: StockDataResult | null
+  news: NewsItem[]
 }
 
 async function getStockData(ticker: string, range: TimeRange = '1d'): Promise<StockDataResult | null> {
   try {
-    // Single attempt, no retries
-    const [quote, quoteSummaryResult] = await Promise.all([
-      Promise.race([
-        yahooFinance.quote(ticker),
-        new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout')), 3000))
-      ]).then(result => result as YahooQuote),
-      Promise.race([
-        yahooFinance.quoteSummary(ticker, {
-          modules: ['price', 'summaryDetail'] // Reduced modules
-        }),
-        new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout')), 3000))
-      ])
-    ]);
+    const quote = await yahooFinance.quote(ticker);
+    const quoteSummaryResult = await yahooFinance.quoteSummary(ticker, {
+      modules: ['price', 'summaryDetail', 'defaultKeyStatistics', 'financialData']
+    });
 
     if (!quote) {
       throw new Error('Failed to fetch quote data');
@@ -102,23 +99,20 @@ async function getStockData(ticker: string, range: TimeRange = '1d'): Promise<St
 
     const interval = range === '1d' ? '5m' : '1d';
     
-    const chartResponse = await Promise.race([
-      axios.get<YahooChartResponse>(
-        `https://query1.finance.yahoo.com/v8/finance/chart/${ticker}`,
-        {
-          params: {
-            interval,
-            range,
-            includePrePost: false // Disabled pre/post market data
-          },
-          headers: {
-            'User-Agent': 'Mozilla/5.0'
-          },
-          timeout: 3000
-        }
-      ),
-      new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout')), 3000))
-    ]).catch(() => null) as { data: YahooChartResponse } | null;
+    const chartResponse = await axios.get<YahooChartResponse>(
+      `https://query1.finance.yahoo.com/v8/finance/chart/${ticker}`,
+      {
+        params: {
+          interval,
+          range,
+          includePrePost: false
+        },
+        headers: {
+          'User-Agent': 'Mozilla/5.0'
+        },
+        timeout: 5000
+      }
+    ).catch(() => null) as { data: YahooChartResponse } | null;
 
     const chartData = chartResponse?.data?.chart?.result?.[0] || { timestamp: [], indicators: { quote: [{ close: [] }] } };
     const timestamps = chartData.timestamp || [];
@@ -132,6 +126,8 @@ async function getStockData(ticker: string, range: TimeRange = '1d'): Promise<St
       .filter((data: ChartData) => data.price !== null);
 
     const summaryDetail = (quoteSummaryResult as any)?.summaryDetail || {};
+    const defaultKeyStatistics = (quoteSummaryResult as any)?.defaultKeyStatistics || {};
+    const financialData = (quoteSummaryResult as any)?.financialData || {};
 
     return {
       price: quote.regularMarketPrice || 0,
@@ -141,11 +137,17 @@ async function getStockData(ticker: string, range: TimeRange = '1d'): Promise<St
       details: {
         marketCap: summaryDetail?.marketCap,
         peRatio: summaryDetail?.trailingPE,
+        forwardPE: summaryDetail?.forwardPE,
+        dividendYield: summaryDetail?.dividendYield,
         volume: summaryDetail?.volume,
         avgVolume: summaryDetail?.averageVolume,
         high52Week: summaryDetail?.fiftyTwoWeekHigh,
         low52Week: summaryDetail?.fiftyTwoWeekLow,
-        beta: summaryDetail?.beta
+        beta: summaryDetail?.beta,
+        priceToBook: defaultKeyStatistics?.priceToBook,
+        earningsGrowth: financialData?.earningsGrowth,
+        revenueGrowth: financialData?.revenueGrowth,
+        profitMargin: financialData?.profitMargins
       }
     };
   } catch (error) {
@@ -159,19 +161,10 @@ async function scrapeStockNews(tickers: string[]): Promise<NewsItem[]> {
   const headlines: NewsItem[] = [];
 
   try {
-    // Process tickers sequentially but with shorter timeouts
     for (const ticker of allTickers) {
       try {
-        const [quote, news] = await Promise.all([
-          Promise.race([
-            yahooFinance.quote(ticker),
-            new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout')), 3000))
-          ]).then(result => result as YahooQuote),
-          Promise.race([
-            yahooFinance.search(ticker, { newsCount: 5 }), // Reduced news count
-            new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout')), 3000))
-          ]).then(result => result as YahooSearchResponse)
-        ]);
+        const quote = await yahooFinance.quote(ticker);
+        const news = await yahooFinance.search(ticker, { newsCount: 3 });
 
         if (quote) {
           headlines.push({
@@ -200,6 +193,9 @@ async function scrapeStockNews(tickers: string[]): Promise<NewsItem[]> {
             url: `https://finance.yahoo.com/quote/${ticker}`
           });
         }
+
+        // Add a small delay between requests
+        await new Promise(resolve => setTimeout(resolve, 1000));
       } catch (error) {
         console.error(`Error processing ${ticker}:`, error);
         headlines.push({
@@ -267,20 +263,65 @@ export async function GET(request: Request): Promise<NextResponse> {
   }
 
   try {
-    // Step 1: Sequential processing for news and stock data
+    // Process all tickers in parallel
     const allTickers = [...new Set([...DEFAULT_TICKERS, ...customTickers])]
-    const stockNews = await scrapeStockNews(customTickers);
-    const stockDataResults: (StockDataResult | null)[] = [];
-    for (const ticker of allTickers) {
-      const data = await getStockData(ticker, range);
-      stockDataResults.push(data);
-    }
+    
+    // Create a function to process a single ticker
+    const processStock = async (ticker: string) => {
+      try {
+        const [stockData, news] = await Promise.all([
+          getStockData(ticker, range),
+          yahooFinance.search(ticker, { newsCount: 3 })
+            .then(result => ({
+              stock: ticker,
+              news: result.news || []
+            }))
+            .catch(() => ({
+              stock: ticker,
+              news: []
+            }))
+        ]);
+
+        return {
+          ticker,
+          stockData,
+          news: news.news.map(item => ({
+            stock: ticker,
+            headline: item.title,
+            url: item.link || `https://finance.yahoo.com/quote/${ticker}`
+          }))
+        };
+      } catch (error) {
+        console.error(`Error processing ${ticker}:`, error);
+        return {
+          ticker,
+          stockData: null,
+          news: [{
+            stock: ticker,
+            headline: `Market analysis for ${ticker}`,
+            url: `https://finance.yahoo.com/quote/${ticker}`
+          }]
+        };
+      }
+    };
+
+    // Process all stocks in parallel with a small delay between each to avoid rate limits
+    const stockResults = await Promise.all(
+      allTickers.map((ticker, index) => 
+        new Promise<StockResult>(resolve => 
+          setTimeout(() => resolve(processStock(ticker)), index * 200)
+        )
+      )
+    );
+
+    // Combine all news items
+    const stockNews = stockResults.flatMap(result => result.news);
     
     if (stockNews.length === 0) {
       throw new Error('No headlines found')
     }
 
-    // Format the prompt for sentiment analysis
+    // Get sentiment analysis from OpenAI
     const prompt = `Analyze these stock headlines and provide sentiment scores between -1.0 (most negative) and 1.0 (most positive). Return your analysis in a JSON object with a 'headlines' array.
 
 Return ONLY a JSON object in this exact format:
@@ -299,7 +340,6 @@ For each headline, copy the exact stock symbol and headline text, and add an app
 Headlines to analyze:
 ${stockNews.map((n: NewsItem) => `${n.stock}: ${n.headline}`).join('\n')}`;
 
-    // Step 2: Get sentiment analysis from OpenAI
     const completion = await openai.chat.completions.create({
       model: 'gpt-3.5-turbo',
       messages: [{ role: 'user', content: prompt }],
@@ -317,7 +357,6 @@ ${stockNews.map((n: NewsItem) => `${n.stock}: ${n.headline}`).join('\n')}`;
     try {
       const parsedContent = JSON.parse(content)
       if (!parsedContent.headlines || !Array.isArray(parsedContent.headlines)) {
-        console.error('Unexpected OpenAI response format:', content)
         throw new Error('Invalid response format')
       }
       sentimentData = parsedContent.headlines
@@ -344,10 +383,11 @@ ${stockNews.map((n: NewsItem) => `${n.stock}: ${n.headline}`).join('\n')}`;
       throw new Error('No valid sentiment data after filtering')
     }
 
-    // Step 3: Combine sentiments and stock data
-    const combinedSentiments = sentimentData.reduce((acc: any[], curr: any) => {
+    // Combine sentiments with stock data
+    const combinedSentiments = sentimentData.reduce((acc: CombinedSentiment[], curr: SentimentItem) => {
       const existing = acc.find(item => item.stock === curr.stock)
-      const stockData = stockDataResults[allTickers.indexOf(curr.stock)] || null
+      const stockResult = stockResults.find(r => r.ticker === curr.stock)
+      const stockData = stockResult?.stockData || null
       
       if (existing) {
         if (!existing.articles) existing.articles = [existing]
@@ -378,10 +418,10 @@ ${stockNews.map((n: NewsItem) => `${n.stock}: ${n.headline}`).join('\n')}`;
       return acc
     }, [])
 
-    // Step 4: Sort stocks by sentimentScore descending
+    // Sort stocks by sentimentScore descending
     combinedSentiments.sort((a: any, b: any) => b.sentimentScore - a.sentimentScore)
 
-    // Step 5: Keep any custom tickers + top others
+    // Keep any custom tickers + top others
     const customTickerResults = combinedSentiments.filter((item: any) =>
       customTickers.includes(item.stock)
     )

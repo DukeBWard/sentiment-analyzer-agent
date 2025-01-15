@@ -74,6 +74,7 @@ export default function Home() {
   const [customTickers, setCustomTickers] = useState<string[]>([])
   const [selectedRange, setSelectedRange] = useState<TimeRange>('1d')
   const [selectedStock, setSelectedStock] = useState<StockSentiment | null>(null)
+  const [apiCallTime, setApiCallTime] = useState<number | null>(null)
 
   const addCustomTicker = () => {
     if (customTicker && !customTickers.includes(customTicker.toUpperCase())) {
@@ -89,6 +90,7 @@ export default function Home() {
   const fetchStocks = useCallback(async () => {
     setLoading(true)
     setError('')
+    const startTime = Date.now()
     try {
       const params = new URLSearchParams()
       if (customTickers.length > 0) {
@@ -102,9 +104,11 @@ export default function Home() {
       }
       const data: StockSentiment[] = await response.json()
       setStocks(data)
+      setApiCallTime(Date.now() - startTime)
     } catch (err: any) {
       console.error(err)
       setError(err.message)
+      setApiCallTime(null)
     } finally {
       setLoading(false)
     }
@@ -152,7 +156,7 @@ export default function Home() {
                 value={customTicker}
                 onChange={(e) => setCustomTicker(e.target.value.toUpperCase())}
                 onKeyPress={(e) => e.key === 'Enter' && addCustomTicker()}
-                className="max-w-xs bg-gray-800/50 border-gray-700 text-white placeholder:text-gray-400 focus:border-gray-600 focus:ring-gray-600"
+                className="max-w-xs bg-gray-800/50 border-gray-700 text-white placeholder:text-gray-400 placeholder:font-jetbrains focus:border-gray-600 focus:ring-gray-600"
               />
               <Button 
                 onClick={addCustomTicker} 
@@ -195,6 +199,14 @@ export default function Home() {
               >
                 {loading ? 'Analyzing...' : 'Refresh Analysis'}
               </Button>
+              {apiCallTime && (
+                <div className="flex items-center text-gray-400 text-sm font-jetbrains">
+                  <svg className="w-4 h-4 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+                  </svg>
+                  {(apiCallTime / 1000).toFixed(1)}s
+                </div>
+              )}
             </div>
           </CardContent>
         </Card>
