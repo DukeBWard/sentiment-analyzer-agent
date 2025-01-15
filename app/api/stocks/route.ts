@@ -31,7 +31,55 @@ type ChartData = {
   price: number | null 
 }
 
-async function getStockData(ticker: string, range: TimeRange = '1d') {
+type YahooQuote = {
+  regularMarketPrice: number;
+  regularMarketChange: number;
+  regularMarketChangePercent: number;
+}
+
+type YahooChartResponse = {
+  chart?: {
+    result?: Array<{
+      timestamp: number[];
+      indicators: {
+        quote: Array<{
+          close: number[];
+        }>;
+      };
+    }>;
+  };
+}
+
+type StockDataResult = {
+  price: number;
+  change: number;
+  changePercent: number;
+  chartData: ChartData[];
+  details: {
+    marketCap?: number;
+    peRatio?: number;
+    forwardPE?: number;
+    dividendYield?: number;
+    volume?: number;
+    avgVolume?: number;
+    high52Week?: number;
+    low52Week?: number;
+    beta?: number;
+    priceToBook?: number;
+    earningsGrowth?: number;
+    revenueGrowth?: number;
+    profitMargin?: number;
+  };
+}
+
+type YahooSearchResponse = {
+  news?: Array<{
+    title: string;
+    link?: string;
+  }>;
+}
+
+async function getStockData(ticker: string, range: TimeRange = '1d'): Promise<StockDataResult | null> {
   const retryDelay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
   const maxRetries = 3;
 
@@ -45,7 +93,7 @@ async function getStockData(ticker: string, range: TimeRange = '1d') {
         Promise.race([
           yahooFinance.quote(ticker),
           new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout')), 5000))
-        ]),
+        ]).then(result => result as YahooQuote),
         Promise.race([
           yahooFinance.quoteSummary(ticker, {
             modules: ['price', 'summaryDetail', 'defaultKeyStatistics', 'financialData']
@@ -64,7 +112,7 @@ async function getStockData(ticker: string, range: TimeRange = '1d') {
                       '1d';
       
       const chartResponse = await Promise.race([
-        axios.get(
+        axios.get<YahooChartResponse>(
           `https://query1.finance.yahoo.com/v8/finance/chart/${ticker}`,
           {
             params: {
@@ -79,7 +127,7 @@ async function getStockData(ticker: string, range: TimeRange = '1d') {
           }
         ),
         new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout')), 5000))
-      ]).catch(() => null);
+      ]).catch(() => null) as { data: YahooChartResponse } | null;
 
       if (!chartResponse?.data?.chart?.result?.[0]) {
         console.warn(`No chart data available for ${ticker}`);
@@ -135,68 +183,55 @@ async function getStockData(ticker: string, range: TimeRange = '1d') {
 async function scrapeStockNews(tickers: string[]): Promise<NewsItem[]> {
   const allTickers = [...new Set([...DEFAULT_TICKERS, ...tickers])];
   const headlines: NewsItem[] = [];
-  const BATCH_SIZE = 5; // Process 5 tickers at a time
 
   try {
-    // Process tickers in batches
-    for (let i = 0; i < allTickers.length; i += BATCH_SIZE) {
-      const batch = allTickers.slice(i, i + BATCH_SIZE);
-      await Promise.all(batch.map(async (ticker) => {
-        try {
-          // Get Yahoo Finance API data with timeout
-          const [quote, news] = await Promise.all([
-            Promise.race([
-              yahooFinance.quote(ticker),
-              new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout')), 5000))
-            ]),
-            Promise.race([
-              yahooFinance.search(ticker, { newsCount: 3 }),
-              new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout')), 5000))
-            ])
-          ]);
+    // Process tickers sequentially
+    for (const ticker of allTickers) {
+      try {
+        // Get Yahoo Finance API data
+        const quote = await yahooFinance.quote(ticker) as YahooQuote;
+        const news = await yahooFinance.search(ticker, { newsCount: 3 }) as YahooSearchResponse;
 
-          // Add price movement headline
-          if (quote) {
-            headlines.push({
-              stock: ticker,
-              headline: `${ticker} trading at $${quote.regularMarketPrice?.toFixed(2)} with ${quote.regularMarketChangePercent?.toFixed(2)}% change`,
-              url: `https://finance.yahoo.com/quote/${ticker}`
-            });
-          }
-
-          // Add Yahoo Finance news headlines
-          if (news.news && news.news.length > 0) {
-            news.news.forEach(item => {
-              if (item.title) {
-                headlines.push({
-                  stock: ticker,
-                  headline: item.title,
-                  url: item.link || `https://finance.yahoo.com/quote/${ticker}`
-                });
-              }
-            });
-          }
-
-          // Add default headline if we don't have any
-          if (!headlines.some(h => h.stock === ticker)) {
-            headlines.push({
-              stock: ticker,
-              headline: `Market analysis for ${ticker}`,
-              url: `https://finance.yahoo.com/quote/${ticker}`
-            });
-          }
-        } catch (error) {
-          console.error(`Error processing ${ticker}:`, error);
+        // Add price movement headline
+        if (quote) {
           headlines.push({
             stock: ticker,
-            headline: `Market analysis for ${ticker} based on recent performance`,
+            headline: `${ticker} trading at $${quote.regularMarketPrice?.toFixed(2)} with ${quote.regularMarketChangePercent?.toFixed(2)}% change`,
             url: `https://finance.yahoo.com/quote/${ticker}`
           });
         }
-      }));
-      // Add a small delay between batches
-      if (i + BATCH_SIZE < allTickers.length) {
-        await new Promise(resolve => setTimeout(resolve, 1000));
+
+        // Add Yahoo Finance news headlines
+        if (news.news && news.news.length > 0) {
+          news.news.forEach(item => {
+            if (item.title) {
+              headlines.push({
+                stock: ticker,
+                headline: item.title,
+                url: item.link || `https://finance.yahoo.com/quote/${ticker}`
+              });
+            }
+          });
+        }
+
+        // Add default headline if we don't have any
+        if (!headlines.some(h => h.stock === ticker)) {
+          headlines.push({
+            stock: ticker,
+            headline: `Market analysis for ${ticker}`,
+            url: `https://finance.yahoo.com/quote/${ticker}`
+          });
+        }
+
+        // Add a small delay between requests
+        await new Promise(resolve => setTimeout(resolve, 500));
+      } catch (error) {
+        console.error(`Error processing ${ticker}:`, error);
+        headlines.push({
+          stock: ticker,
+          headline: `Market analysis for ${ticker} based on recent performance`,
+          url: `https://finance.yahoo.com/quote/${ticker}`
+        });
       }
     }
 
@@ -211,16 +246,17 @@ async function scrapeStockNews(tickers: string[]): Promise<NewsItem[]> {
   }
 }
 
-
 export async function POST(req: Request) {
   try {
     const { tickers, range } = await req.json()
     
-    // Parallelize news scraping and stock data fetching
-    const [stockNews, stockDataResults] = await Promise.all([
-      scrapeStockNews(tickers),
-      Promise.all(tickers.map((ticker: string) => getStockData(ticker, range)))
-    ])
+    // Sequential processing
+    const stockNews = await scrapeStockNews(tickers);
+    const stockDataResults: (StockDataResult | null)[] = [];
+    for (const ticker of tickers) {
+      const data = await getStockData(ticker, range);
+      stockDataResults.push(data);
+    }
     
     return NextResponse.json({
       tickers,
@@ -256,12 +292,14 @@ export async function GET(request: Request): Promise<NextResponse> {
   }
 
   try {
-    // Step 1: Parallelize news scraping and stock data fetching for all tickers
+    // Step 1: Sequential processing for news and stock data
     const allTickers = [...new Set([...DEFAULT_TICKERS, ...customTickers])]
-    const [stockNews, stockDataResults] = await Promise.all([
-      scrapeStockNews(customTickers),
-      Promise.all(allTickers.map(ticker => getStockData(ticker, range)))
-    ])
+    const stockNews = await scrapeStockNews(customTickers);
+    const stockDataResults: (StockDataResult | null)[] = [];
+    for (const ticker of allTickers) {
+      const data = await getStockData(ticker, range);
+      stockDataResults.push(data);
+    }
     
     if (stockNews.length === 0) {
       throw new Error('No headlines found')
