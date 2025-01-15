@@ -2,7 +2,6 @@
 import { NextResponse } from 'next/server'
 import OpenAI from 'openai'
 import axios from 'axios'
-import * as cheerio from 'cheerio'
 import yahooFinance from 'yahoo-finance2'
 
 const openai = new OpenAI({
@@ -25,17 +24,6 @@ type SentimentItem = {
   stock: string
   headline: string
   sentimentScore: number
-}
-
-
-type NewsSource = {
-  url: string
-  selectors: {
-    article: string
-    headline: string
-    link: string
-  }
-  baseUrl?: string
 }
 
 type ChartData = { 
@@ -209,8 +197,7 @@ export async function POST(req: Request) {
     // Parallelize news scraping and stock data fetching
     const [stockNews, stockDataResults] = await Promise.all([
       scrapeStockNews(tickers),
-      Promise.all(tickers.map((ticker: string) => getStockData(ticker, range))),
-      Promise.all(tickers.map((ticker:string) => getStockData(ticker, range)))
+      Promise.all(tickers.map((ticker: string) => getStockData(ticker, range)))
     ])
     
     return NextResponse.json({
