@@ -4,9 +4,6 @@ import OpenAI from 'openai'
 import axios from 'axios'
 import * as cheerio from 'cheerio'
 import yahooFinance from 'yahoo-finance2'
-import FuzzySet from 'fuzzyset.js'
-import http from 'http'
-import https from 'https'
 
 const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY,
@@ -16,112 +13,35 @@ const DEFAULT_TICKERS = ['AAPL', 'MSFT', 'GOOGL', 'AMZN', 'META', 'TSLA', 'NVDA'
 
 type TimeRange = '1d' | '5d' | '1mo' | '1y'
 const VALID_TIME_RANGES: TimeRange[] = ['1d', '5d', '1mo', '1y']
+
 type NewsItem = {
-  stock: string;
-  headline: string;
-  url?: string;
-  individualSentiment?: number;
+  stock: string
+  headline: string
+  url?: string
+  individualSentiment?: number
 }
 
 type SentimentItem = {
-  stock: string;
-  headline: string;
-  sentimentScore: number;
+  stock: string
+  headline: string
+  sentimentScore: number
 }
 
-type YahooSummaryDetail = {
-  marketCap?: number;
-  trailingPE?: number;
-  forwardPE?: number;
-  dividendYield?: number;
-  volume?: number;
-  averageVolume?: number;
-  fiftyTwoWeekHigh?: number;
-  fiftyTwoWeekLow?: number;
-  beta?: number;
-}
-
-type YahooKeyStats = {
-  priceToBook?: number;
-}
-
-type YahooFinancialData = {
-  earningsGrowth?: number;
-  revenueGrowth?: number;
-  profitMargins?: number;
-}
 
 type NewsSource = {
-  url: string;
+  url: string
   selectors: {
-    article: string;
-    headline: string;
-    link: string;
-  };
-  baseUrl?: string;
+    article: string
+    headline: string
+    link: string
+  }
+  baseUrl?: string
 }
 
-type ChartData = { timestamp: string; price: number | null }
-
-// Add custom axios instance with proper config
-const axiosInstance = axios.create({
-  headers: {
-    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
-    'Accept-Language': 'en-US,en;q=0.9',
-    'Accept-Encoding': 'gzip, deflate, br',
-    'Connection': 'keep-alive',
-    'Cache-Control': 'no-cache',
-    'Pragma': 'no-cache',
-    'Sec-Fetch-Dest': 'document',
-    'Sec-Fetch-Mode': 'navigate',
-    'Sec-Fetch-Site': 'none',
-    'Sec-Fetch-User': '?1',
-    'Upgrade-Insecure-Requests': '1'
-  },
-  maxRedirects: 5,
-  timeout: 15000,
-  decompress: true,
-  maxContentLength: 10 * 1024 * 1024, // 10MB
-  maxBodyLength: 10 * 1024 * 1024, // 10MB
-  validateStatus: (status) => status === 200,
-  httpAgent: new http.Agent({ keepAlive: true }),
-  httpsAgent: new https.Agent({ keepAlive: true })
-});
-
-// Add rate limiting utility
-const rateLimiter = {
-  queue: [] as (() => Promise<any>)[],
-  processing: false,
-  delay: 2000,
-
-  async add<T>(task: () => Promise<T>): Promise<T> {
-    return new Promise((resolve, reject) => {
-      this.queue.push(async () => {
-        try {
-          const result = await task();
-          resolve(result);
-        } catch (error) {
-          reject(error);
-        }
-      });
-      this.process();
-    });
-  },
-
-  async process() {
-    if (this.processing || this.queue.length === 0) return;
-    this.processing = true;
-    while (this.queue.length > 0) {
-      const task = this.queue.shift();
-      if (task) {
-        await task();
-        await new Promise(resolve => setTimeout(resolve, this.delay));
-      }
-    }
-    this.processing = false;
-  }
-};
+type ChartData = { 
+  timestamp: string
+  price: number | null 
+}
 
 async function getStockData(ticker: string, range: TimeRange = '1d') {
   const retryDelay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
@@ -216,75 +136,34 @@ async function getStockData(ticker: string, range: TimeRange = '1d') {
   return null;
 }
 
-// Add new types
-type CompanyInfo = {
-  ticker: string;
-  name: string;
-  shortName?: string;
-  industry?: string;
-  sector?: string;
-  keywords: string[];
-}
-
-// Add before scrapeStockNews function
-async function getCompanyInfo(ticker: string): Promise<CompanyInfo | null> {
-  try {
-    const quote = await yahooFinance.quote(ticker)
-    const results = await yahooFinance.quoteSummary(ticker, {
-      modules: ['summaryProfile', 'quoteType']
-    })
-    
-    const profile = (results as any).summaryProfile || {}
-    const quoteType = (results as any).quoteType || {}
-    
-    // Generate keywords from company info
-    const keywords = new Set<string>()
-    keywords.add(ticker.toLowerCase())
-    
-    if (quoteType.shortName) {
-      keywords.add(quoteType.shortName.toLowerCase())
-      // Add variations without common company terms
-      keywords.add(quoteType.shortName.toLowerCase().replace(/\s*(inc\.?|corp\.?|corporation|company|co\.?)$/i, ''))
-    }
-    
-    if (quoteType.longName) {
-      keywords.add(quoteType.longName.toLowerCase())
-      keywords.add(quoteType.longName.toLowerCase().replace(/\s*(inc\.?|corp\.?|corporation|company|co\.?)$/i, ''))
-    }
-    
-    if (profile.industry) {
-      keywords.add(profile.industry.toLowerCase())
-    }
-    
-    // Add common variations
-    const mainName = quoteType.shortName || quoteType.longName || ''
-    if (mainName) {
-      // Add without legal entities
-      const cleanName = mainName.replace(/\s*(Inc\.|Corp\.|Corporation|Company|Co\.)$/i, '').trim()
-      keywords.add(cleanName.toLowerCase())
-      
-      // Add first word (often the main brand)
-      const firstWord = cleanName.split(' ')[0]
-      if (firstWord.length > 2) { // Avoid too short words
-        keywords.add(firstWord.toLowerCase())
-      }
-    }
-
-    return {
-      ticker,
-      name: quoteType.longName || quoteType.shortName || ticker,
-      shortName: quoteType.shortName,
-      industry: profile.industry,
-      sector: profile.sector,
-      keywords: [...keywords]
-    }
-  } catch (error) {
-    console.error(`Error fetching company info for ${ticker}:`, error)
-    return null
-  }
-}
-
 const NEWS_SOURCES: NewsSource[] = [
+  {
+    url: 'https://www.reuters.com/markets/companies/{ticker}',
+    selectors: {
+      article: 'article.media-story-card',
+      headline: 'a.media-story-card__heading__eqhp9',
+      link: 'a.media-story-card__heading__eqhp9'
+    },
+    baseUrl: 'https://www.reuters.com'
+  },
+  {
+    url: 'https://www.bloomberg.com/quote/{ticker}:US',
+    selectors: {
+      article: 'article.story-list-story',
+      headline: 'a.story-list-story__headline',
+      link: 'a.story-list-story__headline'
+    },
+    baseUrl: 'https://www.bloomberg.com'
+  },
+  {
+    url: 'https://money.cnn.com/quote/quote.html?symb={ticker}',
+    selectors: {
+      article: 'div.wsod_newsStory',
+      headline: 'a',
+      link: 'a'
+    },
+    baseUrl: 'https://money.cnn.com'
+  },
   {
     url: 'https://www.marketwatch.com/investing/stock/{ticker}',
     selectors: {
@@ -406,14 +285,22 @@ async function scrapeStockNews(tickers: string[]): Promise<NewsItem[]> {
   }
 }
 
+
 export async function POST(req: Request) {
   try {
     const { tickers, range } = await req.json()
-    const stockNews = await scrapeStockNews(tickers)
+    
+    // Parallelize news scraping and stock data fetching
+    const [stockNews, stockDataResults] = await Promise.all([
+      scrapeStockNews(tickers),
+      Promise.all(tickers.map((ticker: string) => getStockData(ticker, range))),
+      Promise.all(tickers.map((ticker:string) => getStockData(ticker, range)))
+    ])
     
     return NextResponse.json({
       tickers,
-      articles: stockNews
+      articles: stockNews,
+      stockData: stockDataResults
     })
   } catch (error) {
     console.error('Error in sentiment analysis:', error)
@@ -424,7 +311,7 @@ export async function POST(req: Request) {
   }
 }
 
-export async function GET(request: Request) {
+export async function GET(request: Request): Promise<NextResponse> {
   if (!process.env.OPENAI_API_KEY) {
     return NextResponse.json(
       { error: 'OpenAI API key not configured' },
@@ -444,13 +331,18 @@ export async function GET(request: Request) {
   }
 
   try {
-    const stockNews = await scrapeStockNews(customTickers)
+    // Step 1: Parallelize news scraping and stock data fetching for all tickers
+    const allTickers = [...new Set([...DEFAULT_TICKERS, ...customTickers])]
+    const [stockNews, stockDataResults] = await Promise.all([
+      scrapeStockNews(customTickers),
+      Promise.all(allTickers.map(ticker => getStockData(ticker, range)))
+    ])
     
     if (stockNews.length === 0) {
       throw new Error('No headlines found')
     }
 
-    // Format the prompt to ensure valid JSON response
+    // Format the prompt for sentiment analysis
     const prompt = `Analyze these stock headlines and provide sentiment scores between -1.0 (most negative) and 1.0 (most positive). Return your analysis in a JSON object with a 'headlines' array.
 
 Return ONLY a JSON object in this exact format:
@@ -469,6 +361,7 @@ For each headline, copy the exact stock symbol and headline text, and add an app
 Headlines to analyze:
 ${stockNews.map((n: NewsItem) => `${n.stock}: ${n.headline}`).join('\n')}`;
 
+    // Step 2: Get sentiment analysis from OpenAI
     const completion = await openai.chat.completions.create({
       model: 'gpt-3.5-turbo',
       messages: [{ role: 'user', content: prompt }],
@@ -481,7 +374,7 @@ ${stockNews.map((n: NewsItem) => `${n.stock}: ${n.headline}`).join('\n')}`;
       throw new Error('No content received from OpenAI')
     }
 
-    // Parse the response carefully
+    // Parse and validate the response
     let sentimentData = []
     try {
       const parsedContent = JSON.parse(content)
@@ -513,9 +406,11 @@ ${stockNews.map((n: NewsItem) => `${n.stock}: ${n.headline}`).join('\n')}`;
       throw new Error('No valid sentiment data after filtering')
     }
 
-    // Combine sentiments per ticker
+    // Step 3: Combine sentiments and stock data
     const combinedSentiments = sentimentData.reduce((acc: any[], curr: any) => {
       const existing = acc.find(item => item.stock === curr.stock)
+      const stockData = stockDataResults[allTickers.indexOf(curr.stock)] || null
+      
       if (existing) {
         if (!existing.articles) existing.articles = [existing]
         existing.articles.push({
@@ -529,6 +424,7 @@ ${stockNews.map((n: NewsItem) => `${n.stock}: ${n.headline}`).join('\n')}`;
           0
         )
         existing.sentimentScore = existing.totalSentiment / existing.count
+        if (!existing.stockData) existing.stockData = stockData
       } else {
         acc.push({
           ...curr,
@@ -537,31 +433,21 @@ ${stockNews.map((n: NewsItem) => `${n.stock}: ${n.headline}`).join('\n')}`;
             sentimentScore: curr.sentimentScore,
             url: stockNews.find(n => n.headline === curr.headline)?.url
           }],
-          count: 1
+          count: 1,
+          stockData
         })
       }
       return acc
     }, [])
 
-    // STEP 3: Get stock data for each ticker
-    const stockDataPromises = combinedSentiments.map(async (item: any) => {
-      const stockData = await getStockData(item.stock, range)
-      return {
-        ...item,
-        stockData
-      }
-    })
+    // Step 4: Sort stocks by sentimentScore descending
+    combinedSentiments.sort((a: any, b: any) => b.sentimentScore - a.sentimentScore)
 
-    const enrichedData = await Promise.all(stockDataPromises)
-
-    // STEP 4: Sort stocks by sentimentScore descending
-    enrichedData.sort((a: any, b: any) => b.sentimentScore - a.sentimentScore)
-
-    // STEP 5: Keep any custom tickers + top others
-    const customTickerResults = enrichedData.filter((item: any) =>
+    // Step 5: Keep any custom tickers + top others
+    const customTickerResults = combinedSentiments.filter((item: any) =>
       customTickers.includes(item.stock)
     )
-    const otherResults = enrichedData
+    const otherResults = combinedSentiments
       .filter((item: any) => !customTickers.includes(item.stock))
       .slice(0, 10 - customTickerResults.length)
 
@@ -575,3 +461,4 @@ ${stockNews.map((n: NewsItem) => `${n.stock}: ${n.headline}`).join('\n')}`;
     return NextResponse.json({ error: message }, { status: statusCode })
   }
 }
+

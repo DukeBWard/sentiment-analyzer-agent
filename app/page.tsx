@@ -271,11 +271,11 @@ export default function Home() {
         </div>
 
         <Dialog open={!!selectedStock} onOpenChange={() => setSelectedStock(null)}>
-          <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto bg-gray-900 text-white border-gray-700 font-jetbrains">
+          <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto bg-gray-900 text-white border-gray-700">
             {selectedStock && (
               <>
                 <DialogHeader>
-                  <DialogTitle className="text-2xl flex items-center justify-between">
+                  <DialogTitle className="text-2xl flex items-center justify-between font-jetbrains">
                     <span>{selectedStock.stock}</span>
                     {selectedStock.stockData && (
                       <span className={`text-lg ${selectedStock.stockData.change >= 0 ? 'text-green-400' : 'text-red-400'}`}>
@@ -291,9 +291,9 @@ export default function Home() {
 
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
                   <div>
-                    <h3 className="text-lg font-semibold mb-2">Key Statistics</h3>
+                    <h3 className="text-lg font-semibold mb-2 font-jetbrains">Key Statistics</h3>
                     {selectedStock.stockData?.details && (
-                      <div className="grid grid-cols-2 gap-2 text-sm">
+                      <div className="grid grid-cols-2 gap-2 text-sm font-jetbrains">
                         <div className="text-gray-400">Market Cap</div>
                         <div className="text-right text-gray-200">{formatLargeNumber(selectedStock.stockData.details.marketCap)}</div>
                         <div className="text-gray-400">P/E Ratio</div>
@@ -317,9 +317,9 @@ export default function Home() {
                   </div>
 
                   <div>
-                    <h3 className="text-lg font-semibold mb-2">Growth & Volume</h3>
+                    <h3 className="text-lg font-semibold mb-2 font-jetbrains">Growth & Volume</h3>
                     {selectedStock.stockData?.details && (
-                      <div className="grid grid-cols-2 gap-2 text-sm">
+                      <div className="grid grid-cols-2 gap-2 text-sm font-jetbrains">
                         <div className="text-gray-400">Volume</div>
                         <div className="text-right text-gray-200">{formatLargeNumber(selectedStock.stockData.details.volume)}</div>
                         <div className="text-gray-400">Avg Volume</div>
@@ -334,10 +334,10 @@ export default function Home() {
                 </div>
 
                 <div>
-                  <h3 className="text-xl font-semibold mb-4 text-center">
+                  <h3 className="text-xl font-semibold mb-4 text-center font-jetbrains">
                     Sentiment Analysis ({selectedStock.count} Articles)
                   </h3>
-                  <div className={`text-center p-2 rounded-md ${
+                  <div className={`text-center p-2 rounded-md font-jetbrains ${
                     selectedStock.sentimentScore === 0 ? 'bg-gray-800/50' :
                     selectedStock.sentimentScore > 0 ? 'bg-green-900/50' : 'bg-red-900/50'
                   }`}>
@@ -352,24 +352,24 @@ export default function Home() {
                     </span>
                   </div>
 
-                  <div className="max-h-[300px] overflow-y-auto mt-4">
+                  <div className="max-h-[300px] overflow-y-auto">
                     <Table>
                       <TableHeader>
                         <TableRow className="border-gray-700">
-                          <TableHead className="text-gray-300">Headline</TableHead>
-                          <TableHead className="w-32 text-right text-gray-300">Sentiment</TableHead>
+                          <TableHead className="text-gray-300 font-jetbrains">Headline</TableHead>
+                          <TableHead className="w-32 text-right text-gray-300 font-jetbrains">Sentiment</TableHead>
                         </TableRow>
                       </TableHeader>
                       <TableBody>
-                        {selectedStock.articles.map((article, index) => (
+                        {selectedStock.articles?.map((article: Article, index: number) => (
                           <TableRow key={index} className="border-gray-700">
-                            <TableCell>
+                            <TableCell className="font-jetbrains">
                               {article.url ? (
                                 <a 
                                   href={article.url} 
                                   target="_blank" 
-                                  rel="noopener noreferrer"
-                                  className="text-blue-400 hover:text-blue-300 hover:underline"
+                                  rel="noopener noreferrer" 
+                                  className="hover:underline text-blue-400"
                                 >
                                   {article.headline}
                                 </a>
@@ -377,8 +377,9 @@ export default function Home() {
                                 article.headline
                               )}
                             </TableCell>
-                            <TableCell className={`text-right ${
-                              article.sentimentScore >= 0 ? 'text-green-400' : 'text-red-400'
+                            <TableCell className={`text-right font-jetbrains ${
+                              article.sentimentScore === 0 ? 'text-gray-400' :
+                              article.sentimentScore > 0 ? 'text-green-400' : 'text-red-400'
                             }`}>
                               {article.sentimentScore.toFixed(2)}
                             </TableCell>
