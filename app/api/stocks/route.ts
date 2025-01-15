@@ -156,83 +156,63 @@ async function getStockData(ticker: string, range: TimeRange = '1d'): Promise<St
   }
 }
 
-async function scrapeStockNews(tickers: string[]): Promise<NewsItem[]> {
-  const allTickers = [...new Set([...DEFAULT_TICKERS, ...tickers])];
-  const headlines: NewsItem[] = [];
-
+// Create a function to process a single ticker
+async function processStock(ticker: string, range: TimeRange = '1d'): Promise<StockResult> {
   try {
-    for (const ticker of allTickers) {
-      try {
-        const quote = await yahooFinance.quote(ticker);
-        const news = await yahooFinance.search(ticker, { newsCount: 3 });
-
-        if (quote) {
-          headlines.push({
-            stock: ticker,
-            headline: `${ticker} trading at $${quote.regularMarketPrice?.toFixed(2)} with ${quote.regularMarketChangePercent?.toFixed(2)}% change`,
-            url: `https://finance.yahoo.com/quote/${ticker}`
-          });
-        }
-
-        if (news.news && news.news.length > 0) {
-          news.news.forEach(item => {
-            if (item.title) {
-              headlines.push({
-                stock: ticker,
-                headline: item.title,
-                url: item.link || `https://finance.yahoo.com/quote/${ticker}`
-              });
-            }
-          });
-        }
-
-        if (!headlines.some(h => h.stock === ticker)) {
-          headlines.push({
-            stock: ticker,
-            headline: `Market analysis for ${ticker}`,
-            url: `https://finance.yahoo.com/quote/${ticker}`
-          });
-        }
-
-        // Add a small delay between requests
-        await new Promise(resolve => setTimeout(resolve, 1000));
-      } catch (error) {
-        console.error(`Error processing ${ticker}:`, error);
-        headlines.push({
+    const [stockData, news] = await Promise.all([
+      getStockData(ticker, range),
+      yahooFinance.search(ticker, { newsCount: 3 })
+        .then(result => ({
           stock: ticker,
-          headline: `Market analysis for ${ticker}`,
-          url: `https://finance.yahoo.com/quote/${ticker}`
-        });
-      }
-    }
+          news: result.news || []
+        }))
+        .catch(() => ({
+          stock: ticker,
+          news: []
+        }))
+    ]);
 
-    return headlines;
+    return {
+      ticker,
+      stockData,
+      news: news.news.map(item => ({
+        stock: ticker,
+        headline: item.title,
+        url: item.link || `https://finance.yahoo.com/quote/${ticker}`
+      }))
+    };
   } catch (error) {
-    console.error('Error in scrapeStockNews:', error);
-    return allTickers.map(ticker => ({
-      stock: ticker,
-      headline: `Market analysis for ${ticker}`,
-      url: `https://finance.yahoo.com/quote/${ticker}`
-    }));
+    console.error(`Error processing ${ticker}:`, error);
+    return {
+      ticker,
+      stockData: null,
+      news: [{
+        stock: ticker,
+        headline: `Market analysis for ${ticker}`,
+        url: `https://finance.yahoo.com/quote/${ticker}`
+      }]
+    };
   }
 }
 
 export async function POST(req: Request) {
   try {
     const { tickers, range } = await req.json()
+    const allTickers = [...new Set([...DEFAULT_TICKERS, ...tickers])]
     
-    // Sequential processing
-    const stockNews = await scrapeStockNews(tickers);
-    const stockDataResults: (StockDataResult | null)[] = [];
-    for (const ticker of tickers) {
-      const data = await getStockData(ticker, range);
-      stockDataResults.push(data);
-    }
-    
+    // Process all stocks in parallel with a small delay between each
+    const stockResults = await Promise.all(
+      allTickers.map((ticker, index) => 
+        new Promise<StockResult>(resolve => 
+          setTimeout(() => resolve(processStock(ticker)), index * 200)
+        )
+      )
+    );
+
     return NextResponse.json({
-      tickers,
-      articles: stockNews,
-      stockData: stockDataResults
+      tickers: allTickers,
+      articles: stockResults.flatMap(result => result.news),
+      stockData: stockResults.map(result => result.stockData)
     })
   } catch (error) {
     console.error('Error in sentiment analysis:', error)
@@ -266,45 +246,6 @@ export async function GET(request: Request): Promise<NextResponse> {
     // Process all tickers in parallel
     const allTickers = [...new Set([...DEFAULT_TICKERS, ...customTickers])]
     
-    // Create a function to process a single ticker
-    const processStock = async (ticker: string) => {
-      try {
-        const [stockData, news] = await Promise.all([
-          getStockData(ticker, range),
-          yahooFinance.search(ticker, { newsCount: 3 })
-            .then(result => ({
-              stock: ticker,
-              news: result.news || []
-            }))
-            .catch(() => ({
-              stock: ticker,
-              news: []
-            }))
-        ]);
-
-        return {
-          ticker,
-          stockData,
-          news: news.news.map(item => ({
-            stock: ticker,
-            headline: item.title,
-            url: item.link || `https://finance.yahoo.com/quote/${ticker}`
-          }))
-        };
-      } catch (error) {
-        console.error(`Error processing ${ticker}:`, error);
-        return {
-          ticker,
-          stockData: null,
-          news: [{
-            stock: ticker,
-            headline: `Market analysis for ${ticker}`,
-            url: `https://finance.yahoo.com/quote/${ticker}`
-          }]
-        };
-      }
-    };
-
     // Process all stocks in parallel with a small delay between each to avoid rate limits
     const stockResults = await Promise.all(
       allTickers.map((ticker, index) => 
@@ -341,7 +282,7 @@ Headlines to analyze:
 ${stockNews.map((n: NewsItem) => `${n.stock}: ${n.headline}`).join('\n')}`;
 
     const completion = await openai.chat.completions.create({
-      model: 'gpt-3.5-turbo',
+      model: 'gpt-4o-mini',
       messages: [{ role: 'user', content: prompt }],
       temperature: 0.7,
       response_format: { type: "json_object" }
