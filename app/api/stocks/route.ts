@@ -4,6 +4,9 @@ import OpenAI from 'openai'
 import axios from 'axios'
 import * as cheerio from 'cheerio'
 import yahooFinance from 'yahoo-finance2'
+import FuzzySet from 'fuzzyset.js'
+import http from 'http'
+import https from 'https'
 
 const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY,
@@ -12,11 +15,18 @@ const openai = new OpenAI({
 const DEFAULT_TICKERS = ['AAPL', 'MSFT', 'GOOGL', 'AMZN', 'META', 'TSLA', 'NVDA', 'AMD', 'INTC', 'CRM', 'NFLX']
 
 type TimeRange = '1d' | '5d' | '1mo' | '1y'
+const VALID_TIME_RANGES: TimeRange[] = ['1d', '5d', '1mo', '1y']
 type NewsItem = {
   stock: string;
   headline: string;
   url?: string;
   individualSentiment?: number;
+}
+
+type SentimentItem = {
+  stock: string;
+  headline: string;
+  sentimentScore: number;
 }
 
 type YahooSummaryDetail = {
@@ -53,254 +63,346 @@ type NewsSource = {
 
 type ChartData = { timestamp: string; price: number | null }
 
-const NEWS_SOURCES: NewsSource[] = [
-  {
-    url: 'https://finance.yahoo.com/news',
-    selectors: {
-      article: 'div.Cf',
-      headline: 'h3.Mb\\(5px\\)',
-      link: 'a'
-    },
-    baseUrl: 'https://finance.yahoo.com'
+// Add custom axios instance with proper config
+const axiosInstance = axios.create({
+  headers: {
+    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
+    'Accept-Language': 'en-US,en;q=0.9',
+    'Accept-Encoding': 'gzip, deflate, br',
+    'Connection': 'keep-alive',
+    'Cache-Control': 'no-cache',
+    'Pragma': 'no-cache',
+    'Sec-Fetch-Dest': 'document',
+    'Sec-Fetch-Mode': 'navigate',
+    'Sec-Fetch-Site': 'none',
+    'Sec-Fetch-User': '?1',
+    'Upgrade-Insecure-Requests': '1'
   },
-  {
-    url: 'https://www.marketwatch.com/latest-news',
-    selectors: {
-      article: 'div.article__content',
-      headline: 'a.link',
-      link: 'a.link'
-    },
-    baseUrl: 'https://www.marketwatch.com'
+  maxRedirects: 5,
+  timeout: 15000,
+  decompress: true,
+  maxContentLength: 10 * 1024 * 1024, // 10MB
+  maxBodyLength: 10 * 1024 * 1024, // 10MB
+  validateStatus: (status) => status === 200,
+  httpAgent: new http.Agent({ keepAlive: true }),
+  httpsAgent: new https.Agent({ keepAlive: true })
+});
+
+// Add rate limiting utility
+const rateLimiter = {
+  queue: [] as (() => Promise<any>)[],
+  processing: false,
+  delay: 2000,
+
+  async add<T>(task: () => Promise<T>): Promise<T> {
+    return new Promise((resolve, reject) => {
+      this.queue.push(async () => {
+        try {
+          const result = await task();
+          resolve(result);
+        } catch (error) {
+          reject(error);
+        }
+      });
+      this.process();
+    });
   },
-  {
-    url: 'https://www.investing.com/news/stock-market-news',
-    selectors: {
-      article: 'div.largeTitle article',
-      headline: 'a.title',
-      link: 'a.title'
-    },
-    baseUrl: 'https://www.investing.com'
-  },
-  {
-    url: 'https://www.zacks.com/stock-news',
-    selectors: {
-      article: '.news_items_container .news_item',
-      headline: '.news_link',
-      link: '.news_link'
-    },
-    baseUrl: 'https://www.zacks.com'
-  },
-  {
-    url: 'https://www.nasdaq.com/news-and-insights/topic/markets',
-    selectors: {
-      article: 'article.content-feed-card',
-      headline: 'h3.content-feed-card__headline',
-      link: 'a.content-feed-card__headline-link'
-    },
-    baseUrl: 'https://www.nasdaq.com'
-  },
-  {
-    url: 'https://www.barrons.com/topics/markets',
-    selectors: {
-      article: 'article.BarronsTheme--article-card',
-      headline: '.BarronsTheme--headline',
-      link: 'a.BarronsTheme--headline-link'
-    },
-    baseUrl: 'https://www.barrons.com'
-  },
-  {
-    url: 'https://www.thestreet.com/markets',
-    selectors: {
-      article: 'article.news-list__item',
-      headline: '.news-list__headline',
-      link: 'a.news-list__url'
-    },
-    baseUrl: 'https://www.thestreet.com'
+
+  async process() {
+    if (this.processing || this.queue.length === 0) return;
+    this.processing = true;
+    while (this.queue.length > 0) {
+      const task = this.queue.shift();
+      if (task) {
+        await task();
+        await new Promise(resolve => setTimeout(resolve, this.delay));
+      }
+    }
+    this.processing = false;
   }
-]
+};
 
 async function getStockData(ticker: string, range: TimeRange = '1d') {
+  const retryDelay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
+  const maxRetries = 3;
+
+  for (let attempt = 0; attempt < maxRetries; attempt++) {
+    try {
+      // Add delay between retries
+      if (attempt > 0) {
+        await retryDelay(2000 * attempt);
+      }
+
+      const [quote, quoteSummaryResult] = await Promise.all([
+        yahooFinance.quote(ticker).catch(() => null),
+        yahooFinance.quoteSummary(ticker, {
+          modules: ['price', 'summaryDetail', 'defaultKeyStatistics', 'financialData']
+        }).catch(() => null)
+      ]);
+
+      if (!quote) {
+        throw new Error('Failed to fetch quote data');
+      }
+
+      // Configure interval based on range
+      const interval = range === '1d' ? '5m' : 
+                      range === '5d' ? '15m' :
+                      range === '1mo' ? '1d' : 
+                      '1d';
+      
+      const chartResponse = await axios.get(
+        `https://query1.finance.yahoo.com/v8/finance/chart/${ticker}`,
+        {
+          params: {
+            interval,
+            range,
+            includePrePost: range === '1d'
+          },
+          headers: {
+            'User-Agent': 'Mozilla/5.0'
+          }
+        }
+      ).catch(() => null);
+
+      if (!chartResponse?.data?.chart?.result?.[0]) {
+        console.warn(`No chart data available for ${ticker}`);
+      }
+
+      const chartData = chartResponse?.data?.chart?.result?.[0] || { timestamp: [], indicators: { quote: [{ close: [] }] } };
+      const timestamps = chartData.timestamp || [];
+      const prices = chartData.indicators.quote[0].close || [];
+      
+      const validChartData = timestamps
+        .map((timestamp: number, index: number) => ({
+          timestamp: new Date(timestamp * 1000).toISOString(),
+          price: prices[index] || null
+        }))
+        .filter((data: ChartData) => data.price !== null);
+
+      const summaryDetail = (quoteSummaryResult as any)?.summaryDetail || {};
+      const defaultKeyStatistics = (quoteSummaryResult as any)?.defaultKeyStatistics || {};
+      const financialData = (quoteSummaryResult as any)?.financialData || {};
+
+      return {
+        price: quote.regularMarketPrice || 0,
+        change: quote.regularMarketChange || 0,
+        changePercent: quote.regularMarketChangePercent || 0,
+        chartData: validChartData,
+        details: {
+          marketCap: summaryDetail?.marketCap,
+          peRatio: summaryDetail?.trailingPE,
+          forwardPE: summaryDetail?.forwardPE,
+          dividendYield: summaryDetail?.dividendYield,
+          volume: summaryDetail?.volume,
+          avgVolume: summaryDetail?.averageVolume,
+          high52Week: summaryDetail?.fiftyTwoWeekHigh,
+          low52Week: summaryDetail?.fiftyTwoWeekLow,
+          beta: summaryDetail?.beta,
+          priceToBook: defaultKeyStatistics?.priceToBook,
+          earningsGrowth: financialData?.earningsGrowth,
+          revenueGrowth: financialData?.revenueGrowth,
+          profitMargin: financialData?.profitMargins
+        }
+      };
+    } catch (error) {
+      if (attempt === maxRetries - 1) {
+        console.error(`Error fetching stock data for ${ticker} after ${maxRetries} attempts:`, error);
+        return null;
+      }
+      console.warn(`Retry ${attempt + 1} for ${ticker} after error:`, error);
+    }
+  }
+  return null;
+}
+
+// Add new types
+type CompanyInfo = {
+  ticker: string;
+  name: string;
+  shortName?: string;
+  industry?: string;
+  sector?: string;
+  keywords: string[];
+}
+
+// Add before scrapeStockNews function
+async function getCompanyInfo(ticker: string): Promise<CompanyInfo | null> {
   try {
     const quote = await yahooFinance.quote(ticker)
-    const quoteSummaryResult = await yahooFinance.quoteSummary(ticker, {
-      modules: ['price', 'summaryDetail', 'defaultKeyStatistics', 'financialData']
+    const results = await yahooFinance.quoteSummary(ticker, {
+      modules: ['summaryProfile', 'quoteType']
     })
     
-    // Configure interval based on range
-    const interval =
-      range === '1d' ? '5m'
-      : range === '5d' ? '15m'
-      : range === '1mo' ? '1d'
-      : '1d'
+    const profile = (results as any).summaryProfile || {}
+    const quoteType = (results as any).quoteType || {}
     
-    // Fetch intraday data using v8 API
-    const response = await axios.get(
-      `https://query1.finance.yahoo.com/v8/finance/chart/${ticker}`, {
-        params: {
-          interval,
-          range,
-          includePrePost: range === '1d'
-        },
-        headers: {
-          'User-Agent': 'Mozilla/5.0'
-        }
-      }
-    )
+    // Generate keywords from company info
+    const keywords = new Set<string>()
+    keywords.add(ticker.toLowerCase())
     
-    if (!response.data.chart?.result?.[0]) {
-      throw new Error('No chart data available')
+    if (quoteType.shortName) {
+      keywords.add(quoteType.shortName.toLowerCase())
+      // Add variations without common company terms
+      keywords.add(quoteType.shortName.toLowerCase().replace(/\s*(inc\.?|corp\.?|corporation|company|co\.?)$/i, ''))
     }
-
-    const chartData = response.data.chart.result[0]
-    const timestamps = chartData.timestamp || []
-    const prices = chartData.indicators.quote[0].close || []
     
-    const validChartData = timestamps
-      .map((ts: number, i: number) => ({
-        timestamp: new Date(ts * 1000).toISOString(),
-        price: prices[i] || null
-      }))
-      .filter((d: any) => d.price !== null)
-
-    // Extract data
-    const summaryDetail = (quoteSummaryResult as any).summaryDetail as YahooSummaryDetail || {}
-    const defaultKeyStatistics = (quoteSummaryResult as any).defaultKeyStatistics as YahooKeyStats || {}
-    const financialData = (quoteSummaryResult as any).financialData as YahooFinancialData || {}
-
-    const details = {
-      marketCap: summaryDetail?.marketCap,
-      peRatio: summaryDetail?.trailingPE,
-      forwardPE: summaryDetail?.forwardPE,
-      dividendYield: summaryDetail?.dividendYield,
-      volume: summaryDetail?.volume,
-      avgVolume: summaryDetail?.averageVolume,
-      high52Week: summaryDetail?.fiftyTwoWeekHigh,
-      low52Week: summaryDetail?.fiftyTwoWeekLow,
-      beta: summaryDetail?.beta,
-      priceToBook: defaultKeyStatistics?.priceToBook,
-      earningsGrowth: financialData?.earningsGrowth,
-      revenueGrowth: financialData?.revenueGrowth,
-      profitMargin: financialData?.profitMargins
+    if (quoteType.longName) {
+      keywords.add(quoteType.longName.toLowerCase())
+      keywords.add(quoteType.longName.toLowerCase().replace(/\s*(inc\.?|corp\.?|corporation|company|co\.?)$/i, ''))
+    }
+    
+    if (profile.industry) {
+      keywords.add(profile.industry.toLowerCase())
+    }
+    
+    // Add common variations
+    const mainName = quoteType.shortName || quoteType.longName || ''
+    if (mainName) {
+      // Add without legal entities
+      const cleanName = mainName.replace(/\s*(Inc\.|Corp\.|Corporation|Company|Co\.)$/i, '').trim()
+      keywords.add(cleanName.toLowerCase())
+      
+      // Add first word (often the main brand)
+      const firstWord = cleanName.split(' ')[0]
+      if (firstWord.length > 2) { // Avoid too short words
+        keywords.add(firstWord.toLowerCase())
+      }
     }
 
     return {
-      price: quote.regularMarketPrice || 0,
-      change: quote.regularMarketChange || 0,
-      changePercent: quote.regularMarketChangePercent || 0,
-      chartData: validChartData,
-      details
+      ticker,
+      name: quoteType.longName || quoteType.shortName || ticker,
+      shortName: quoteType.shortName,
+      industry: profile.industry,
+      sector: profile.sector,
+      keywords: [...keywords]
     }
   } catch (error) {
-    console.error(`Error fetching stock data for ${ticker}:`, error)
+    console.error(`Error fetching company info for ${ticker}:`, error)
     return null
   }
 }
 
-/**
- * Scrapes headlines from multiple news sources.
- * Any headline that contains the ticker (case-insensitive) will be pushed to that ticker’s array.
- */
-async function scrapeStockNews(tickers: string[]): Promise<NewsItem[]> {
-  // Merge user-provided tickers with defaults
-  const allTickers: string[] = [...new Set([...DEFAULT_TICKERS, ...tickers])]
-  const headers = {
-    'User-Agent': 'Mozilla/5.0',
-    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
-    'Accept-Language': 'en-US,en;q=0.5',
-    'Accept-Encoding': 'gzip, deflate, br'
+const NEWS_SOURCES: NewsSource[] = [
+  {
+    url: 'https://www.marketwatch.com/investing/stock/{ticker}',
+    selectors: {
+      article: 'div.article__content',
+      headline: 'h3.article__headline',
+      link: 'h3.article__headline a'
+    },
+    baseUrl: 'https://www.marketwatch.com'
   }
+];
+
+async function scrapeStockNews(tickers: string[]): Promise<NewsItem[]> {
+  const allTickers = [...new Set([...DEFAULT_TICKERS, ...tickers])];
+  const headlines: NewsItem[] = [];
+  const headers = {
+    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+    'Accept-Language': 'en-US,en;q=0.5'
+  };
 
   try {
-    // Scrape all news sources in parallel
-    const allHeadlinesPromises = NEWS_SOURCES.map(async (source) => {
+    // Process tickers in parallel
+    await Promise.all(allTickers.map(async (ticker) => {
       try {
-        const response = await axios.get(source.url, { 
-          headers,
-          maxRedirects: 5,
-          timeout: 15000
-        }).catch(async (error) => {
-          console.error(`Failed to fetch ${source.url}:`, error.message)
-          if (error.response?.status === 429 || error.code === 'ECONNABORTED') {
-            console.log(`Retrying ${source.url} after timeout...`)
-            await new Promise(resolve => setTimeout(resolve, 2000))
-            return axios.get(source.url, { headers })
-          }
-          throw error
-        })
+        // 1. Get Yahoo Finance API data first (fast and reliable)
+        const [quote, news] = await Promise.all([
+          yahooFinance.quote(ticker),
+          yahooFinance.search(ticker, { newsCount: 3 })
+        ]);
 
-        if (response.status !== 200) {
-          console.warn(`Warning: ${source.url} returned status ${response.status}`)
-          return []
+        // Add price movement headline
+        if (quote) {
+          headlines.push({
+            stock: ticker,
+            headline: `${ticker} trading at $${quote.regularMarketPrice?.toFixed(2)} with ${quote.regularMarketChangePercent?.toFixed(2)}% change`,
+            url: `https://finance.yahoo.com/quote/${ticker}`
+          });
         }
 
-        const $ = cheerio.load(response.data)
-        const headlines: NewsItem[] = []
+        // Add Yahoo Finance news headlines
+        if (news.news && news.news.length > 0) {
+          news.news.forEach(item => {
+            if (item.title) {
+              headlines.push({
+                stock: ticker,
+                headline: item.title,
+                url: item.link || `https://finance.yahoo.com/quote/${ticker}`
+              });
+            }
+          });
+        }
 
-        $(source.selectors.article).each((_, element) => {
-          const $element = $(element)
-          const headline = source.selectors.headline 
-            ? $element.find(source.selectors.headline).text().trim()
-            : $element.text().trim()
+        // 2. Try web scraping if we don't have enough headlines
+        if (headlines.filter(h => h.stock === ticker).length < 3) {
+          for (const source of NEWS_SOURCES) {
+            try {
+              const url = source.url.replace('{ticker}', ticker.toLowerCase());
+              const response = await axios.get(url, {
+                headers,
+                timeout: 5000,
+                maxRedirects: 3
+              });
 
-          let url = source.selectors.link 
-            ? $element.find(source.selectors.link).attr('href') || $element.attr('href')
-            : ''
-
-          if (url && source.baseUrl && !url.startsWith('http')) {
-            // Make absolute URL
-            url = source.baseUrl + (url.startsWith('/') ? '' : '/') + url
-          }
-
-          // For each ticker, check if the headline mentions it
-          if (headline && url) {
-            const headlineLower = headline.toLowerCase()
-
-            for (const ticker of allTickers) {
-              if (
-                // Simple substring check
-                headlineLower.includes(ticker.toLowerCase()) &&
-                // Avoid duplicates
-                !headlines.some(h => h.headline === headline)
-              ) {
-                headlines.push({
-                  stock: ticker,
-                  headline,
-                  url
-                })
-                break
+              if (response.status === 200) {
+                const $ = cheerio.load(response.data);
+                $(source.selectors.article).slice(0, 3).each((_, element) => {
+                  const headline = $(element).find(source.selectors.headline).text().trim();
+                  let url = $(element).find(source.selectors.link).attr('href');
+                  
+                  if (headline && url) {
+                    if (!url.startsWith('http')) {
+                      url = source.baseUrl + (url.startsWith('/') ? '' : '/') + url;
+                    }
+                    
+                    // Only add if we don't already have this headline
+                    if (!headlines.some(h => h.stock === ticker && h.headline === headline)) {
+                      headlines.push({
+                        stock: ticker,
+                        headline,
+                        url
+                      });
+                    }
+                  }
+                });
               }
+            } catch (error) {
+              console.error(`Error scraping ${source.url} for ${ticker}:`, error);
+              continue;
             }
           }
-        })
+        }
 
-        return headlines
+        // Add default headline if we still don't have any
+        if (!headlines.some(h => h.stock === ticker)) {
+          headlines.push({
+            stock: ticker,
+            headline: `Analyzing market trends for ${ticker}`,
+            url: `https://finance.yahoo.com/quote/${ticker}`
+          });
+        }
       } catch (error) {
-        console.error(`Error scraping ${source.url}:`, error)
-        return []
-      }
-    })
-    
-    const allHeadlinesArrays = await Promise.all(allHeadlinesPromises)
-    const headlines = allHeadlinesArrays.flat()
-
-    // If a ticker wasn't mentioned at all, give it a default headline
-    for (const ticker of allTickers) {
-      if (!headlines.some((news: NewsItem) => news.stock === ticker)) {
+        console.error(`Error processing ${ticker}:`, error);
         headlines.push({
           stock: ticker,
-          headline: `Market analysis for ${ticker} based on recent performance`
-        })
+          headline: `Market analysis for ${ticker} based on recent performance`,
+          url: `https://finance.yahoo.com/quote/${ticker}`
+        });
       }
-    }
+    }));
 
-    return headlines
+    return headlines;
   } catch (error) {
-    console.error('Error scraping news sources:', error)
-    // Fallback: return default headlines for all tickers
-    return allTickers.map((ticker: string) => ({
+    console.error('Error in scrapeStockNews:', error);
+    return allTickers.map(ticker => ({
       stock: ticker,
-      headline: `Market analysis for ${ticker} based on recent performance`
-    }))
+      headline: `Market analysis for ${ticker} based on recent performance`,
+      url: `https://finance.yahoo.com/quote/${ticker}`
+    }));
   }
 }
 
@@ -330,37 +432,49 @@ export async function GET(request: Request) {
     )
   }
 
-  // Get custom tickers and range from query params
   const { searchParams } = new URL(request.url)
   const customTickers = searchParams.get('tickers')?.split(',') || []
   const range = (searchParams.get('range') || '1d') as TimeRange
   
+  if (!VALID_TIME_RANGES.includes(range)) {
+    return NextResponse.json(
+      { error: `Invalid range. Must be one of: ${VALID_TIME_RANGES.join(', ')}` },
+      { status: 400 }
+    )
+  }
+
   try {
-    // STEP 1: Fetch real headlines with custom tickers
     const stockNews = await scrapeStockNews(customTickers)
     
     if (stockNews.length === 0) {
       throw new Error('No headlines found')
     }
 
-    // STEP 2: Use OpenAI to rank each stock by sentiment
-    const prompt = `Analyze these stock headlines and return ONLY a JSON array (no other text) with sentiment scores between -1.0 (most negative) and 1.0 (most positive). Each headline should have its own sentiment score. Use this exact format:
-[
-  { 
-    "stock": "<ticker>",
-    "headline": "<full headline text>",
-    "sentimentScore": <number between -1.0 and 1.0>
-  }
-]
+    // Format the prompt to ensure valid JSON response
+    const prompt = `Analyze these stock headlines and provide sentiment scores between -1.0 (most negative) and 1.0 (most positive). Return your analysis in a JSON object with a 'headlines' array.
+
+Return ONLY a JSON object in this exact format:
+{
+  "headlines": [
+    {
+      "stock": "TICKER",
+      "headline": "HEADLINE_TEXT",
+      "sentimentScore": SCORE
+    }
+  ]
+}
+
+For each headline, copy the exact stock symbol and headline text, and add an appropriate sentiment score.
 
 Headlines to analyze:
-${stockNews.map((n: NewsItem) => `${n.stock}: ${n.headline}`).join('\n')}`
+${stockNews.map((n: NewsItem) => `${n.stock}: ${n.headline}`).join('\n')}`;
 
     const completion = await openai.chat.completions.create({
-      model: 'gpt-4o-mini',
+      model: 'gpt-3.5-turbo',
       messages: [{ role: 'user', content: prompt }],
       temperature: 0.7,
-    })
+      response_format: { type: "json_object" }
+    });
 
     const content = completion.choices[0]?.message?.content
     if (!content) {
@@ -370,15 +484,33 @@ ${stockNews.map((n: NewsItem) => `${n.stock}: ${n.headline}`).join('\n')}`
     // Parse the response carefully
     let sentimentData = []
     try {
-      sentimentData = JSON.parse(content)
+      const parsedContent = JSON.parse(content)
+      if (!parsedContent.headlines || !Array.isArray(parsedContent.headlines)) {
+        console.error('Unexpected OpenAI response format:', content)
+        throw new Error('Invalid response format')
+      }
+      sentimentData = parsedContent.headlines
     } catch (err) {
-      console.error('Error parsing JSON from OpenAI:', err)
+      console.error('Error parsing JSON from OpenAI:', err, 'Raw content:', content)
       throw new Error('Failed to parse sentiment data')
     }
 
-    // Validate the data structure
-    if (!Array.isArray(sentimentData) || sentimentData.length === 0) {
-      throw new Error('Invalid sentiment data format')
+    // Validate each sentiment item
+    sentimentData = sentimentData.filter((item: unknown): item is SentimentItem => {
+      const i = item as Record<string, unknown>;
+      return (
+        !!item &&
+        typeof i === 'object' &&
+        typeof i.stock === 'string' &&
+        typeof i.headline === 'string' &&
+        typeof i.sentimentScore === 'number' &&
+        i.sentimentScore >= -1 &&
+        i.sentimentScore <= 1
+      )
+    });
+
+    if (sentimentData.length === 0) {
+      throw new Error('No valid sentiment data after filtering')
     }
 
     // Combine sentiments per ticker
@@ -438,9 +570,8 @@ ${stockNews.map((n: NewsItem) => `${n.stock}: ${n.headline}`).join('\n')}`
     return NextResponse.json(finalResults)
   } catch (error: any) {
     console.error('Error in sentiment analysis:', error)
-    return NextResponse.json(
-      { error: error.message || 'Failed to analyze sentiment' },
-      { status: 500 }
-    )
+    const statusCode = error.status || 500
+    const message = error.response?.data?.error?.message || error.message || 'Failed to analyze sentiment'
+    return NextResponse.json({ error: message }, { status: statusCode })
   }
 }

@@ -152,9 +152,14 @@ export default function Home() {
                 value={customTicker}
                 onChange={(e) => setCustomTicker(e.target.value.toUpperCase())}
                 onKeyPress={(e) => e.key === 'Enter' && addCustomTicker()}
-                className="max-w-xs bg-gray-800 border-gray-700 text-white font-jetbrains"
+                className="max-w-xs bg-gray-800/50 border-gray-700 text-white placeholder:text-gray-400 focus:border-gray-600 focus:ring-gray-600"
               />
-              <Button onClick={addCustomTicker} className="bg-blue-600 hover:bg-blue-700 font-jetbrains">Add Ticker</Button>
+              <Button 
+                onClick={addCustomTicker} 
+                className="bg-blue-600 hover:bg-blue-700 text-white font-jetbrains"
+              >
+                Add Ticker
+              </Button>
             </div>
             {customTickers.length > 0 && (
               <div className="flex gap-2 mb-4">
@@ -163,10 +168,10 @@ export default function Home() {
                     key={ticker}
                     variant="outline"
                     onClick={() => removeCustomTicker(ticker)}
-                    className="gap-2 border-gray-700 text-white hover:bg-gray-800 font-jetbrains"
+                    className="bg-gray-800/50 border-gray-700 text-white hover:bg-gray-700 hover:text-white font-jetbrains"
                   >
                     {ticker}
-                    <span className="text-xs">×</span>
+                    <span className="ml-2 text-xs">×</span>
                   </Button>
                 ))}
               </div>
@@ -266,11 +271,11 @@ export default function Home() {
         </div>
 
         <Dialog open={!!selectedStock} onOpenChange={() => setSelectedStock(null)}>
-          <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto bg-gray-900 text-white border-gray-700">
+          <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto bg-gray-900 text-white border-gray-700 font-jetbrains">
             {selectedStock && (
               <>
                 <DialogHeader>
-                  <DialogTitle className="text-2xl flex items-center justify-between font-jetbrains">
+                  <DialogTitle className="text-2xl flex items-center justify-between">
                     <span>{selectedStock.stock}</span>
                     {selectedStock.stockData && (
                       <span className={`text-lg ${selectedStock.stockData.change >= 0 ? 'text-green-400' : 'text-red-400'}`}>
@@ -286,9 +291,9 @@ export default function Home() {
 
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
                   <div>
-                    <h3 className="text-lg font-semibold mb-2 font-jetbrains">Key Statistics</h3>
+                    <h3 className="text-lg font-semibold mb-2">Key Statistics</h3>
                     {selectedStock.stockData?.details && (
-                      <div className="grid grid-cols-2 gap-2 text-sm font-jetbrains">
+                      <div className="grid grid-cols-2 gap-2 text-sm">
                         <div className="text-gray-400">Market Cap</div>
                         <div className="text-right text-gray-200">{formatLargeNumber(selectedStock.stockData.details.marketCap)}</div>
                         <div className="text-gray-400">P/E Ratio</div>
@@ -312,9 +317,9 @@ export default function Home() {
                   </div>
 
                   <div>
-                    <h3 className="text-lg font-semibold mb-2 font-jetbrains">Growth & Volume</h3>
+                    <h3 className="text-lg font-semibold mb-2">Growth & Volume</h3>
                     {selectedStock.stockData?.details && (
-                      <div className="grid grid-cols-2 gap-2 text-sm font-jetbrains">
+                      <div className="grid grid-cols-2 gap-2 text-sm">
                         <div className="text-gray-400">Volume</div>
                         <div className="text-right text-gray-200">{formatLargeNumber(selectedStock.stockData.details.volume)}</div>
                         <div className="text-gray-400">Avg Volume</div>
@@ -332,7 +337,7 @@ export default function Home() {
                   <h3 className="text-xl font-semibold mb-4 text-center">
                     Sentiment Analysis ({selectedStock.count} Articles)
                   </h3>
-                  <div className={`text-center p-2 rounded-md font-jetbrains ${
+                  <div className={`text-center p-2 rounded-md ${
                     selectedStock.sentimentScore === 0 ? 'bg-gray-800/50' :
                     selectedStock.sentimentScore > 0 ? 'bg-green-900/50' : 'bg-red-900/50'
                   }`}>
@@ -347,7 +352,7 @@ export default function Home() {
                     </span>
                   </div>
 
-                  <div className="max-h-[300px] overflow-y-auto">
+                  <div className="max-h-[300px] overflow-y-auto mt-4">
                     <Table>
                       <TableHeader>
                         <TableRow className="border-gray-700">
@@ -358,7 +363,7 @@ export default function Home() {
                       <TableBody>
                         {selectedStock.articles.map((article, index) => (
                           <TableRow key={index} className="border-gray-700">
-                            <TableCell className="font-jetbrains">
+                            <TableCell>
                               {article.url ? (
                                 <a 
                                   href={article.url} 
@@ -372,7 +377,7 @@ export default function Home() {
                                 article.headline
                               )}
                             </TableCell>
-                            <TableCell className={`text-right font-jetbrains ${
+                            <TableCell className={`text-right ${
                               article.sentimentScore >= 0 ? 'text-green-400' : 'text-red-400'
                             }`}>
                               {article.sentimentScore.toFixed(2)}
