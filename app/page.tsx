@@ -183,32 +183,32 @@ export default function Home() {
       {/* Gradient Dot Background */}
       <div className="absolute inset-0 w-full h-full bg-[radial-gradient(#ffffff33_1px,transparent_1px)] [background-size:16px_16px] [mask-image:radial-gradient(ellipse_50%_50%_at_50%_50%,black,transparent)]" />
       
-      <div className="container mx-auto p-8 relative">
+      <div className="container mx-auto p-4 sm:p-8 relative">
         <Card className="mb-8 bg-gray-900/50 backdrop-blur-sm border-gray-700">
           <CardHeader>
-            <CardTitle className="text-3xl font-jetbrains text-white">Stock Sentiment Analyzer</CardTitle>
+            <CardTitle className="text-2xl sm:text-3xl font-jetbrains text-white">Stock Sentiment Analyzer</CardTitle>
           </CardHeader>
           <CardContent>
-            <p className="text-gray-300 mb-4 font-jetbrains">
+            <p className="text-gray-300 mb-4 font-jetbrains text-sm sm:text-base">
               This tool uses OpenAI to analyze market sentiment for various stocks and displays the top stocks to consider based on sentiment.
             </p>
-            <div className="flex gap-4 mb-4">
+            <div className="flex flex-col sm:flex-row gap-2 sm:gap-4 mb-4">
               <Input
                 placeholder="Add custom ticker (e.g., MSFT)"
                 value={customTicker}
                 onChange={(e) => setCustomTicker(e.target.value.toUpperCase())}
                 onKeyPress={(e) => e.key === 'Enter' && addCustomTicker()}
-                className="max-w-xs bg-gray-800/50 border-gray-700 text-white placeholder:text-gray-400 placeholder:font-jetbrains focus:border-gray-600 focus:ring-gray-600"
+                className="w-full sm:max-w-xs bg-gray-800/50 border-gray-700 text-white placeholder:text-gray-400 placeholder:font-jetbrains focus:border-gray-600 focus:ring-gray-600"
               />
               <Button 
                 onClick={addCustomTicker} 
-                className="bg-blue-600 hover:bg-blue-700 text-white font-jetbrains"
+                className="w-full sm:w-auto bg-blue-600 hover:bg-blue-700 text-white font-jetbrains"
               >
                 Add Ticker
               </Button>
             </div>
             {customTickers.length > 0 && (
-              <div className="flex gap-2 mb-4">
+              <div className="flex flex-wrap gap-2 mb-4">
                 {customTickers.map(ticker => (
                   <Button
                     key={ticker}
@@ -222,9 +222,9 @@ export default function Home() {
                 ))}
               </div>
             )}
-            <div className="flex gap-4 items-center">
+            <div className="flex flex-col sm:flex-row gap-2 sm:gap-4 items-start sm:items-center">
               <Select value={selectedRange} onValueChange={(value: TimeRange) => setSelectedRange(value)}>
-                <SelectTrigger className="w-[180px] bg-gray-800 border-gray-700 text-white font-jetbrains">
+                <SelectTrigger className="w-full sm:w-[180px] bg-gray-800 border-gray-700 text-white font-jetbrains">
                   <SelectValue placeholder="Select time range" />
                 </SelectTrigger>
                 <SelectContent className="bg-gray-800 border-gray-700">
@@ -234,33 +234,35 @@ export default function Home() {
                   <SelectItem value="1y" className="text-white hover:bg-gray-700">1 Year</SelectItem>
                 </SelectContent>
               </Select>
-              <Button 
-                onClick={fetchStocks} 
-                disabled={loading}
-                className="bg-blue-600 hover:bg-blue-700 font-jetbrains"
-              >
-                {loading ? 'Analyzing...' : 'Refresh Analysis'}
-              </Button>
-              {apiCallTime && (
-                <div className="flex items-center text-gray-400 text-sm font-jetbrains">
+              <div className="flex w-full sm:w-auto items-center gap-2">
+                <Button 
+                  onClick={fetchStocks} 
+                  disabled={loading}
+                  className="w-full sm:w-auto bg-blue-600 hover:bg-blue-700 font-jetbrains"
+                >
+                  {loading ? 'Analyzing...' : 'Refresh Analysis'}
+                </Button>
+                <div className="flex items-center text-gray-400 text-xs sm:text-sm font-jetbrains whitespace-nowrap">
                   <svg className="w-4 h-4 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
                   </svg>
-                  {(apiCallTime / 1000).toFixed(1)}s
+                  {remainingCalls} left
                 </div>
-              )}
-              <div className="flex items-center text-gray-400 text-sm font-jetbrains">
-                <svg className="w-4 h-4 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
-                </svg>
-                {remainingCalls} refreshes left today
+                {apiCallTime && (
+                  <div className="hidden sm:flex items-center text-gray-400 text-sm font-jetbrains">
+                    <svg className="w-4 h-4 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+                    </svg>
+                    {(apiCallTime / 1000).toFixed(1)}s
+                  </div>
+                )}
               </div>
             </div>
           </CardContent>
         </Card>
 
         {error && (
-          <div className="text-red-500 mb-4 font-jetbrains">{error}</div>
+          <div className="text-red-500 mb-4 font-jetbrains text-sm sm:text-base">{error}</div>
         )}
 
         {loading ? (
@@ -275,11 +277,11 @@ export default function Home() {
               >
                 <CardHeader className="pb-2">
                   <div className="flex justify-between items-center">
-                    <CardTitle className="text-white font-jetbrains">{stock.stock}</CardTitle>
+                    <CardTitle className="text-lg sm:text-xl text-white font-jetbrains">{stock.stock}</CardTitle>
                     {stock.stockData && (
-                      <div className={`text-sm font-jetbrains ${stock.stockData.change >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+                      <div className={`text-xs sm:text-sm font-jetbrains ${stock.stockData.change >= 0 ? 'text-green-400' : 'text-red-400'}`}>
                         ${stock.stockData.price.toFixed(2)}
-                        <span className="ml-2">
+                        <span className="ml-1 sm:ml-2">
                           {stock.stockData.change >= 0 ? '▲' : '▼'} 
                           {Math.abs(stock.stockData.changePercent).toFixed(2)}%
                         </span>
@@ -335,16 +337,16 @@ export default function Home() {
         )}
 
         <Dialog open={!!selectedStock} onOpenChange={() => setSelectedStock(null)}>
-          <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto bg-gray-900 text-white border-gray-700">
+          <DialogContent className="max-w-[95vw] sm:max-w-4xl max-h-[90vh] overflow-y-auto bg-gray-900 text-white border-gray-700">
             {selectedStock && (
               <>
                 <DialogHeader>
-                  <DialogTitle className="text-2xl flex items-center justify-between font-jetbrains">
+                  <DialogTitle className="text-xl sm:text-2xl flex items-center justify-between font-jetbrains">
                     <span>{selectedStock.stock}</span>
                     {selectedStock.stockData && (
-                      <span className={`text-lg ${selectedStock.stockData.change >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+                      <span className={`text-base sm:text-lg ${selectedStock.stockData.change >= 0 ? 'text-green-400' : 'text-red-400'}`}>
                         ${selectedStock.stockData.price.toFixed(2)}
-                        <span className="ml-2">
+                        <span className="ml-1 sm:ml-2">
                           {selectedStock.stockData.change >= 0 ? '▲' : '▼'} 
                           {Math.abs(selectedStock.stockData.changePercent).toFixed(2)}%
                         </span>
