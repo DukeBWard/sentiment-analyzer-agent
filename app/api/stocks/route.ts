@@ -5,6 +5,42 @@ import axios from 'axios'
 import yahooFinance from 'yahoo-finance2'
 
 const DEFAULT_TICKERS = ['AAPL', 'MSFT', 'GOOGL', 'AMZN', 'META']
+const MAX_REQUESTS_PER_DAY = 5
+
+// Simple in-memory store for rate limiting
+type RateLimit = {
+  count: number;
+  lastReset: Date;
+}
+
+const rateLimits = new Map<string, RateLimit>();
+
+function getRateLimit(ip: string): { remaining: number; allowed: boolean } {
+  const now = new Date();
+  const limit = rateLimits.get(ip);
+  
+  // Reset count if it's a new day
+  if (limit && new Date(limit.lastReset).getDate() !== now.getDate()) {
+    limit.count = 0;
+    limit.lastReset = now;
+  }
+  
+  // Initialize if not exists
+  if (!limit) {
+    rateLimits.set(ip, { count: 0, lastReset: now });
+    return { remaining: MAX_REQUESTS_PER_DAY, allowed: true };
+  }
+  
+  const remaining = MAX_REQUESTS_PER_DAY - limit.count;
+  return { remaining, allowed: remaining > 0 };
+}
+
+function incrementRateLimit(ip: string) {
+  const limit = rateLimits.get(ip);
+  if (limit) {
+    limit.count += 1;
+  }
+}
 
 const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY,
@@ -196,9 +232,25 @@ async function processStock(ticker: string, range: TimeRange = '1d'): Promise<St
 }
 
 export async function POST(req: Request) {
+  // Get IP address from request headers
+  const forwardedFor = req.headers.get('x-forwarded-for');
+  const ip = forwardedFor ? forwardedFor.split(',')[0] : 'unknown';
+  
+  // Check rate limit
+  const { remaining, allowed } = getRateLimit(ip);
+  if (!allowed) {
+    return NextResponse.json(
+      { error: 'Rate limit exceeded. Please try again tomorrow.', remaining },
+      { status: 429 }
+    );
+  }
+
   try {
-    const { tickers, range } = await req.json()
+    const { tickers } = await req.json()
     const allTickers = [...new Set([...DEFAULT_TICKERS, ...tickers])]
+    
+    // Increment rate limit before processing
+    incrementRateLimit(ip);
     
     // Process all stocks in parallel with a small delay between each
     const stockResults = await Promise.all(
@@ -210,20 +262,39 @@ export async function POST(req: Request) {
     );
 
     return NextResponse.json({
-      tickers: allTickers,
-      articles: stockResults.flatMap(result => result.news),
-      stockData: stockResults.map(result => result.stockData)
+      data: {
+        tickers: allTickers,
+        articles: stockResults.flatMap(result => result.news),
+        stockData: stockResults.map(result => result.stockData)
+      },
+      remaining: remaining - 1
     })
   } catch (error) {
     console.error('Error in sentiment analysis:', error)
     return NextResponse.json(
-      { error: error instanceof Error ? error.message : 'Failed to analyze sentiment' },
+      { 
+        error: error instanceof Error ? error.message : 'Failed to analyze sentiment',
+        remaining: remaining - 1
+      },
       { status: 500 }
     )
   }
 }
 
 export async function GET(request: Request): Promise<NextResponse> {
+  // Get IP address from request headers
+  const forwardedFor = request.headers.get('x-forwarded-for');
+  const ip = forwardedFor ? forwardedFor.split(',')[0] : 'unknown';
+  
+  // Check rate limit
+  const { remaining, allowed } = getRateLimit(ip);
+  if (!allowed) {
+    return NextResponse.json(
+      { error: 'Rate limit exceeded. Please try again tomorrow.', remaining },
+      { status: 429 }
+    );
+  }
+
   if (!process.env.OPENAI_API_KEY) {
     return NextResponse.json(
       { error: 'OpenAI API key not configured' },
@@ -243,6 +314,9 @@ export async function GET(request: Request): Promise<NextResponse> {
   }
 
   try {
+    // Increment rate limit before processing
+    incrementRateLimit(ip);
+    
     // Process all tickers in parallel
     const allTickers = [...new Set([...DEFAULT_TICKERS, ...customTickers])]
     
@@ -372,12 +446,18 @@ ${stockNews.map((n: NewsItem) => `${n.stock}: ${n.headline}`).join('\n')}`;
 
     const finalResults = [...customTickerResults, ...otherResults]
 
-    return NextResponse.json(finalResults)
+    return NextResponse.json({ 
+      data: finalResults, 
+      remaining: remaining - 1  // Include remaining requests in response
+    })
   } catch (error: any) {
     console.error('Error in sentiment analysis:', error)
     const statusCode = error.status || 500
     const message = error.response?.data?.error?.message || error.message || 'Failed to analyze sentiment'
-    return NextResponse.json({ error: message }, { status: statusCode })
+    return NextResponse.json({ 
+      error: message, 
+      remaining: remaining - 1  // Include remaining requests even in error response
+    }, { status: statusCode })
   }
 }
 

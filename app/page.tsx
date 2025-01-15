@@ -21,6 +21,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table"
+import { Skeleton } from "@/components/ui/skeleton"
 
 type StockDetails = {
   marketCap?: number
@@ -75,6 +76,28 @@ export default function Home() {
   const [selectedRange, setSelectedRange] = useState<TimeRange>('1d')
   const [selectedStock, setSelectedStock] = useState<StockSentiment | null>(null)
   const [apiCallTime, setApiCallTime] = useState<number | null>(null)
+  const [remainingCalls, setRemainingCalls] = useState<number>(5)
+
+  useEffect(() => {
+    const stored = localStorage.getItem('remainingCalls')
+    const lastReset = localStorage.getItem('lastResetDate')
+    const today = new Date().toDateString()
+    
+    // Reset if it's a new day
+    if (lastReset !== today) {
+      localStorage.setItem('remainingCalls', '5')
+      localStorage.setItem('lastResetDate', today)
+      setRemainingCalls(5)
+    } else if (stored) {
+      setRemainingCalls(parseInt(stored))
+    }
+  }, [])
+
+  const updateRemainingCalls = (count: number) => {
+    setRemainingCalls(count)
+    localStorage.setItem('remainingCalls', count.toString())
+    localStorage.setItem('lastResetDate', new Date().toDateString())
+  }
 
   const addCustomTicker = () => {
     if (customTicker && !customTickers.includes(customTicker.toUpperCase())) {
@@ -102,8 +125,12 @@ export default function Home() {
       if (!response.ok) {
         throw new Error('Failed to fetch data')
       }
-      const data: StockSentiment[] = await response.json()
-      setStocks(data)
+      const result = await response.json()
+      if (result.error) {
+        throw new Error(result.error)
+      }
+      setStocks(result.data)
+      updateRemainingCalls(result.remaining)
       setApiCallTime(Date.now() - startTime)
     } catch (err: any) {
       console.error(err)
@@ -135,6 +162,21 @@ export default function Home() {
     if (num === undefined) return 'N/A'
     return `${(num * 100).toFixed(2)}%`
   }
+
+  const LoadingSkeleton = () => (
+    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+      {[1, 2, 3].map((i) => (
+        <div key={i} className="bg-gray-900/50 backdrop-blur-sm border border-gray-700 rounded-lg p-4">
+          <div className="flex justify-between items-center mb-4">
+            <Skeleton className="h-6 w-20 bg-gray-700" />
+            <Skeleton className="h-6 w-32 bg-gray-700" />
+          </div>
+          <Skeleton className="h-32 w-full bg-gray-700 mb-4" />
+          <Skeleton className="h-10 w-full bg-gray-700" />
+        </div>
+      ))}
+    </div>
+  )
 
   return (
     <main className="min-h-screen bg-gradient-to-br from-gray-900 via-gray-800 to-gray-900 relative overflow-hidden">
@@ -207,6 +249,12 @@ export default function Home() {
                   {(apiCallTime / 1000).toFixed(1)}s
                 </div>
               )}
+              <div className="flex items-center text-gray-400 text-sm font-jetbrains">
+                <svg className="w-4 h-4 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
+                </svg>
+                {remainingCalls} refreshes left today
+              </div>
             </div>
           </CardContent>
         </Card>
@@ -215,72 +263,76 @@ export default function Home() {
           <div className="text-red-500 mb-4 font-jetbrains">{error}</div>
         )}
 
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-          {stocks.map((stock) => (
-            <Card 
-              key={stock.stock} 
-              className="overflow-hidden cursor-pointer hover:shadow-lg transition-shadow bg-gray-900/50 backdrop-blur-sm border-gray-700 hover:border-gray-600"
-              onClick={() => setSelectedStock(stock)}
-            >
-              <CardHeader className="pb-2">
-                <div className="flex justify-between items-center">
-                  <CardTitle className="text-white font-jetbrains">{stock.stock}</CardTitle>
+        {loading ? (
+          <LoadingSkeleton />
+        ) : (
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+            {stocks.map((stock) => (
+              <Card 
+                key={stock.stock} 
+                className="overflow-hidden cursor-pointer hover:shadow-lg transition-shadow bg-gray-900/50 backdrop-blur-sm border-gray-700 hover:border-gray-600"
+                onClick={() => setSelectedStock(stock)}
+              >
+                <CardHeader className="pb-2">
+                  <div className="flex justify-between items-center">
+                    <CardTitle className="text-white font-jetbrains">{stock.stock}</CardTitle>
+                    {stock.stockData && (
+                      <div className={`text-sm font-jetbrains ${stock.stockData.change >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+                        ${stock.stockData.price.toFixed(2)}
+                        <span className="ml-2">
+                          {stock.stockData.change >= 0 ? '▲' : '▼'} 
+                          {Math.abs(stock.stockData.changePercent).toFixed(2)}%
+                        </span>
+                      </div>
+                    )}
+                  </div>
+                </CardHeader>
+                <CardContent>
                   {stock.stockData && (
-                    <div className={`text-sm font-jetbrains ${stock.stockData.change >= 0 ? 'text-green-400' : 'text-red-400'}`}>
-                      ${stock.stockData.price.toFixed(2)}
-                      <span className="ml-2">
-                        {stock.stockData.change >= 0 ? '▲' : '▼'} 
-                        {Math.abs(stock.stockData.changePercent).toFixed(2)}%
-                      </span>
+                    <div className="h-32 mb-4">
+                      <ResponsiveContainer width="100%" height="100%">
+                        <LineChart data={stock.stockData.chartData}>
+                          <Line
+                            type="monotone"
+                            dataKey="price"
+                            stroke={stock.stockData.change >= 0 ? '#4ade80' : '#f87171'}
+                            dot={false}
+                          />
+                          <XAxis
+                            dataKey="timestamp"
+                            hide
+                          />
+                          <YAxis domain={['auto', 'auto']} hide />
+                          <Tooltip
+                            formatter={(value: FormatterValue) => [`$${value}`, 'Price']}
+                            labelFormatter={(label) => new Date(label).toLocaleTimeString()}
+                            contentStyle={{ backgroundColor: '#1f2937', border: 'none', borderRadius: '0.375rem' }}
+                            itemStyle={{ color: '#e5e7eb' }}
+                            labelStyle={{ color: '#e5e7eb' }}
+                          />
+                        </LineChart>
+                      </ResponsiveContainer>
                     </div>
                   )}
-                </div>
-              </CardHeader>
-              <CardContent>
-                {stock.stockData && (
-                  <div className="h-32 mb-4">
-                    <ResponsiveContainer width="100%" height="100%">
-                      <LineChart data={stock.stockData.chartData}>
-                        <Line
-                          type="monotone"
-                          dataKey="price"
-                          stroke={stock.stockData.change >= 0 ? '#4ade80' : '#f87171'}
-                          dot={false}
-                        />
-                        <XAxis
-                          dataKey="timestamp"
-                          hide
-                        />
-                        <YAxis domain={['auto', 'auto']} hide />
-                        <Tooltip
-                          formatter={(value: FormatterValue) => [`$${value}`, 'Price']}
-                          labelFormatter={(label) => new Date(label).toLocaleTimeString()}
-                          contentStyle={{ backgroundColor: '#1f2937', border: 'none', borderRadius: '0.375rem' }}
-                          itemStyle={{ color: '#e5e7eb' }}
-                          labelStyle={{ color: '#e5e7eb' }}
-                        />
-                      </LineChart>
-                    </ResponsiveContainer>
-                  </div>
-                )}
-                <div className={`text-center p-2 rounded-md font-jetbrains ${
-                  !stock.articles?.length || stock.sentimentScore === 0 ? 'bg-gray-800/50' :
-                  stock.sentimentScore > 0 ? 'bg-green-900/50' : 'bg-red-900/50'
-                }`}>
-                  <span className={`font-semibold ${
-                    !stock.articles?.length || stock.sentimentScore === 0 ? 'text-gray-400' :
-                    stock.sentimentScore > 0 ? 'text-green-400' : 'text-red-400'
+                  <div className={`text-center p-2 rounded-md font-jetbrains ${
+                    !stock.articles?.length || stock.sentimentScore === 0 ? 'bg-gray-800/50' :
+                    stock.sentimentScore > 0 ? 'bg-green-900/50' : 'bg-red-900/50'
                   }`}>
-                    {!stock.articles?.length || stock.sentimentScore === 0 ? 
-                      'Not enough data' : 
-                      `Sentiment Score: ${stock.sentimentScore.toFixed(2)}`
-                    }
-                  </span>
-                </div>
-              </CardContent>
-            </Card>
-          ))}
-        </div>
+                    <span className={`font-semibold ${
+                      !stock.articles?.length || stock.sentimentScore === 0 ? 'text-gray-400' :
+                      stock.sentimentScore > 0 ? 'text-green-400' : 'text-red-400'
+                    }`}>
+                      {!stock.articles?.length || stock.sentimentScore === 0 ? 
+                        'Not enough data' : 
+                        `Sentiment Score: ${stock.sentimentScore.toFixed(2)}`
+                      }
+                    </span>
+                  </div>
+                </CardContent>
+              </Card>
+            ))}
+          </div>
+        )}
 
         <Dialog open={!!selectedStock} onOpenChange={() => setSelectedStock(null)}>
           <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto bg-gray-900 text-white border-gray-700">
