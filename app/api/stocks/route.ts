@@ -367,17 +367,20 @@ ${stockNews.map((n: NewsItem) => `${n.stock}: ${n.headline}`).join('\n')}`;
       throw new Error('No content received from OpenAI')
     }
 
-    // Parse and validate the response
+    // Parse and validate the response with better error handling
     let sentimentData = []
     try {
       const parsedContent = JSON.parse(content)
+      console.log('OpenAI Response:', parsedContent)
+      
       if (!parsedContent.headlines || !Array.isArray(parsedContent.headlines)) {
-        throw new Error('Invalid response format')
+        console.error('Invalid response structure:', parsedContent)
+        throw new Error('Response missing headlines array')
       }
       sentimentData = parsedContent.headlines
-    } catch (err) {
+    } catch (err: any) {
       console.error('Error parsing JSON from OpenAI:', err, 'Raw content:', content)
-      throw new Error('Failed to parse sentiment data')
+      throw new Error(`Failed to parse sentiment data: ${err.message}`)
     }
 
     // Validate each sentiment item
