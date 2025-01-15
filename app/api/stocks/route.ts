@@ -8,7 +8,7 @@ const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY,
 })
 
-const DEFAULT_TICKERS = ['AAPL', 'MSFT', 'GOOGL', 'AMZN', 'META', 'TSLA', 'NVDA', 'AMD', 'INTC', 'CRM', 'NFLX']
+const DEFAULT_TICKERS = ['AAPL', 'MSFT', 'GOOGL', 'AMZN', 'META']
 
 type TimeRange = '1d' | '5d' | '1mo' | '1y'
 const VALID_TIME_RANGES: TimeRange[] = ['1d', '5d', '1mo', '1y']
@@ -81,24 +81,24 @@ type YahooSearchResponse = {
 
 async function getStockData(ticker: string, range: TimeRange = '1d'): Promise<StockDataResult | null> {
   const retryDelay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
-  const maxRetries = 3;
+  const maxRetries = 2;
 
   for (let attempt = 0; attempt < maxRetries; attempt++) {
     try {
       if (attempt > 0) {
-        await retryDelay(2000 * attempt);
+        await retryDelay(1000 * attempt);
       }
 
       const [quote, quoteSummaryResult] = await Promise.all([
         Promise.race([
           yahooFinance.quote(ticker),
-          new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout')), 5000))
+          new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout')), 8000))
         ]).then(result => result as YahooQuote),
         Promise.race([
           yahooFinance.quoteSummary(ticker, {
             modules: ['price', 'summaryDetail', 'defaultKeyStatistics', 'financialData']
           }),
-          new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout')), 5000))
+          new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout')), 8000))
         ])
       ]);
 
@@ -123,10 +123,10 @@ async function getStockData(ticker: string, range: TimeRange = '1d'): Promise<St
             headers: {
               'User-Agent': 'Mozilla/5.0'
             },
-            timeout: 5000
+            timeout: 8000
           }
         ),
-        new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout')), 5000))
+        new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout')), 8000))
       ]).catch(() => null) as { data: YahooChartResponse } | null;
 
       if (!chartResponse?.data?.chart?.result?.[0]) {
@@ -188,9 +188,16 @@ async function scrapeStockNews(tickers: string[]): Promise<NewsItem[]> {
     // Process tickers sequentially
     for (const ticker of allTickers) {
       try {
-        // Get Yahoo Finance API data
-        const quote = await yahooFinance.quote(ticker) as YahooQuote;
-        const news = await yahooFinance.search(ticker, { newsCount: 3 }) as YahooSearchResponse;
+        // Get Yahoo Finance API data with longer timeout
+        const quote = await Promise.race([
+          yahooFinance.quote(ticker),
+          new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout')), 8000))
+        ]).then(result => result as YahooQuote);
+        
+        const news = await Promise.race([
+          yahooFinance.search(ticker, { newsCount: 3 }),
+          new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout')), 8000))
+        ]).then(result => result as YahooSearchResponse);
 
         // Add price movement headline
         if (quote) {
