@@ -8,7 +8,7 @@ const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY,
 })
 
-const DEFAULT_TICKERS = ['AAPL', 'MSFT', 'GOOGL', 'AMZN', 'META']
+const DEFAULT_TICKERS = ['AAPL', 'MSFT', 'GOOGL']
 
 type TimeRange = '1d' | '5d' | '1mo' | '1y'
 const VALID_TIME_RANGES: TimeRange[] = ['1d', '5d', '1mo', '1y']
@@ -80,104 +80,77 @@ type YahooSearchResponse = {
 }
 
 async function getStockData(ticker: string, range: TimeRange = '1d'): Promise<StockDataResult | null> {
-  const retryDelay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
-  const maxRetries = 2;
+  try {
+    // Single attempt, no retries
+    const [quote, quoteSummaryResult] = await Promise.all([
+      Promise.race([
+        yahooFinance.quote(ticker),
+        new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout')), 3000))
+      ]).then(result => result as YahooQuote),
+      Promise.race([
+        yahooFinance.quoteSummary(ticker, {
+          modules: ['price', 'summaryDetail'] // Reduced modules
+        }),
+        new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout')), 3000))
+      ])
+    ]);
 
-  for (let attempt = 0; attempt < maxRetries; attempt++) {
-    try {
-      if (attempt > 0) {
-        await retryDelay(1000 * attempt);
-      }
-
-      const [quote, quoteSummaryResult] = await Promise.all([
-        Promise.race([
-          yahooFinance.quote(ticker),
-          new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout')), 8000))
-        ]).then(result => result as YahooQuote),
-        Promise.race([
-          yahooFinance.quoteSummary(ticker, {
-            modules: ['price', 'summaryDetail', 'defaultKeyStatistics', 'financialData']
-          }),
-          new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout')), 8000))
-        ])
-      ]);
-
-      if (!quote) {
-        throw new Error('Failed to fetch quote data');
-      }
-
-      const interval = range === '1d' ? '5m' : 
-                      range === '5d' ? '15m' :
-                      range === '1mo' ? '1d' : 
-                      '1d';
-      
-      const chartResponse = await Promise.race([
-        axios.get<YahooChartResponse>(
-          `https://query1.finance.yahoo.com/v8/finance/chart/${ticker}`,
-          {
-            params: {
-              interval,
-              range,
-              includePrePost: range === '1d'
-            },
-            headers: {
-              'User-Agent': 'Mozilla/5.0'
-            },
-            timeout: 8000
-          }
-        ),
-        new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout')), 8000))
-      ]).catch(() => null) as { data: YahooChartResponse } | null;
-
-      if (!chartResponse?.data?.chart?.result?.[0]) {
-        console.warn(`No chart data available for ${ticker}`);
-      }
-
-      const chartData = chartResponse?.data?.chart?.result?.[0] || { timestamp: [], indicators: { quote: [{ close: [] }] } };
-      const timestamps = chartData.timestamp || [];
-      const prices = chartData.indicators.quote[0].close || [];
-      
-      const validChartData = timestamps
-        .map((timestamp: number, index: number) => ({
-          timestamp: new Date(timestamp * 1000).toISOString(),
-          price: prices[index] || null
-        }))
-        .filter((data: ChartData) => data.price !== null);
-
-      const summaryDetail = (quoteSummaryResult as any)?.summaryDetail || {};
-      const defaultKeyStatistics = (quoteSummaryResult as any)?.defaultKeyStatistics || {};
-      const financialData = (quoteSummaryResult as any)?.financialData || {};
-
-      return {
-        price: quote.regularMarketPrice || 0,
-        change: quote.regularMarketChange || 0,
-        changePercent: quote.regularMarketChangePercent || 0,
-        chartData: validChartData,
-        details: {
-          marketCap: summaryDetail?.marketCap,
-          peRatio: summaryDetail?.trailingPE,
-          forwardPE: summaryDetail?.forwardPE,
-          dividendYield: summaryDetail?.dividendYield,
-          volume: summaryDetail?.volume,
-          avgVolume: summaryDetail?.averageVolume,
-          high52Week: summaryDetail?.fiftyTwoWeekHigh,
-          low52Week: summaryDetail?.fiftyTwoWeekLow,
-          beta: summaryDetail?.beta,
-          priceToBook: defaultKeyStatistics?.priceToBook,
-          earningsGrowth: financialData?.earningsGrowth,
-          revenueGrowth: financialData?.revenueGrowth,
-          profitMargin: financialData?.profitMargins
-        }
-      };
-    } catch (error) {
-      if (attempt === maxRetries - 1) {
-        console.error(`Error fetching stock data for ${ticker} after ${maxRetries} attempts:`, error);
-        return null;
-      }
-      console.warn(`Retry ${attempt + 1} for ${ticker} after error:`, error);
+    if (!quote) {
+      throw new Error('Failed to fetch quote data');
     }
+
+    const interval = range === '1d' ? '5m' : '1d';
+    
+    const chartResponse = await Promise.race([
+      axios.get<YahooChartResponse>(
+        `https://query1.finance.yahoo.com/v8/finance/chart/${ticker}`,
+        {
+          params: {
+            interval,
+            range,
+            includePrePost: false // Disabled pre/post market data
+          },
+          headers: {
+            'User-Agent': 'Mozilla/5.0'
+          },
+          timeout: 3000
+        }
+      ),
+      new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout')), 3000))
+    ]).catch(() => null) as { data: YahooChartResponse } | null;
+
+    const chartData = chartResponse?.data?.chart?.result?.[0] || { timestamp: [], indicators: { quote: [{ close: [] }] } };
+    const timestamps = chartData.timestamp || [];
+    const prices = chartData.indicators.quote[0].close || [];
+    
+    const validChartData = timestamps
+      .map((timestamp: number, index: number) => ({
+        timestamp: new Date(timestamp * 1000).toISOString(),
+        price: prices[index] || null
+      }))
+      .filter((data: ChartData) => data.price !== null);
+
+    const summaryDetail = (quoteSummaryResult as any)?.summaryDetail || {};
+
+    return {
+      price: quote.regularMarketPrice || 0,
+      change: quote.regularMarketChange || 0,
+      changePercent: quote.regularMarketChangePercent || 0,
+      chartData: validChartData,
+      details: {
+        marketCap: summaryDetail?.marketCap,
+        peRatio: summaryDetail?.trailingPE,
+        volume: summaryDetail?.volume,
+        avgVolume: summaryDetail?.averageVolume,
+        high52Week: summaryDetail?.fiftyTwoWeekHigh,
+        low52Week: summaryDetail?.fiftyTwoWeekLow,
+        beta: summaryDetail?.beta
+      }
+    };
+  } catch (error) {
+    console.error(`Error fetching stock data for ${ticker}:`, error);
+    return null;
   }
-  return null;
 }
 
 async function scrapeStockNews(tickers: string[]): Promise<NewsItem[]> {
@@ -185,21 +158,20 @@ async function scrapeStockNews(tickers: string[]): Promise<NewsItem[]> {
   const headlines: NewsItem[] = [];
 
   try {
-    // Process tickers sequentially
+    // Process tickers sequentially but with shorter timeouts
     for (const ticker of allTickers) {
       try {
-        // Get Yahoo Finance API data with longer timeout
-        const quote = await Promise.race([
-          yahooFinance.quote(ticker),
-          new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout')), 8000))
-        ]).then(result => result as YahooQuote);
-        
-        const news = await Promise.race([
-          yahooFinance.search(ticker, { newsCount: 3 }),
-          new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout')), 8000))
-        ]).then(result => result as YahooSearchResponse);
+        const [quote, news] = await Promise.all([
+          Promise.race([
+            yahooFinance.quote(ticker),
+            new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout')), 3000))
+          ]).then(result => result as YahooQuote),
+          Promise.race([
+            yahooFinance.search(ticker, { newsCount: 2 }), // Reduced news count
+            new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout')), 3000))
+          ]).then(result => result as YahooSearchResponse)
+        ]);
 
-        // Add price movement headline
         if (quote) {
           headlines.push({
             stock: ticker,
@@ -208,7 +180,6 @@ async function scrapeStockNews(tickers: string[]): Promise<NewsItem[]> {
           });
         }
 
-        // Add Yahoo Finance news headlines
         if (news.news && news.news.length > 0) {
           news.news.forEach(item => {
             if (item.title) {
@@ -221,7 +192,6 @@ async function scrapeStockNews(tickers: string[]): Promise<NewsItem[]> {
           });
         }
 
-        // Add default headline if we don't have any
         if (!headlines.some(h => h.stock === ticker)) {
           headlines.push({
             stock: ticker,
@@ -229,14 +199,11 @@ async function scrapeStockNews(tickers: string[]): Promise<NewsItem[]> {
             url: `https://finance.yahoo.com/quote/${ticker}`
           });
         }
-
-        // Add a small delay between requests
-        await new Promise(resolve => setTimeout(resolve, 500));
       } catch (error) {
         console.error(`Error processing ${ticker}:`, error);
         headlines.push({
           stock: ticker,
-          headline: `Market analysis for ${ticker} based on recent performance`,
+          headline: `Market analysis for ${ticker}`,
           url: `https://finance.yahoo.com/quote/${ticker}`
         });
       }
@@ -247,7 +214,7 @@ async function scrapeStockNews(tickers: string[]): Promise<NewsItem[]> {
     console.error('Error in scrapeStockNews:', error);
     return allTickers.map(ticker => ({
       stock: ticker,
-      headline: `Market analysis for ${ticker} based on recent performance`,
+      headline: `Market analysis for ${ticker}`,
       url: `https://finance.yahoo.com/quote/${ticker}`
     }));
   }
