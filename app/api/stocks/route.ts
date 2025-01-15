@@ -136,59 +136,15 @@ async function getStockData(ticker: string, range: TimeRange = '1d') {
   return null;
 }
 
-const NEWS_SOURCES: NewsSource[] = [
-  {
-    url: 'https://www.reuters.com/markets/companies/{ticker}',
-    selectors: {
-      article: 'article.media-story-card',
-      headline: 'a.media-story-card__heading__eqhp9',
-      link: 'a.media-story-card__heading__eqhp9'
-    },
-    baseUrl: 'https://www.reuters.com'
-  },
-  {
-    url: 'https://www.bloomberg.com/quote/{ticker}:US',
-    selectors: {
-      article: 'article.story-list-story',
-      headline: 'a.story-list-story__headline',
-      link: 'a.story-list-story__headline'
-    },
-    baseUrl: 'https://www.bloomberg.com'
-  },
-  {
-    url: 'https://money.cnn.com/quote/quote.html?symb={ticker}',
-    selectors: {
-      article: 'div.wsod_newsStory',
-      headline: 'a',
-      link: 'a'
-    },
-    baseUrl: 'https://money.cnn.com'
-  },
-  {
-    url: 'https://www.marketwatch.com/investing/stock/{ticker}',
-    selectors: {
-      article: 'div.article__content',
-      headline: 'h3.article__headline',
-      link: 'h3.article__headline a'
-    },
-    baseUrl: 'https://www.marketwatch.com'
-  }
-];
-
 async function scrapeStockNews(tickers: string[]): Promise<NewsItem[]> {
   const allTickers = [...new Set([...DEFAULT_TICKERS, ...tickers])];
   const headlines: NewsItem[] = [];
-  const headers = {
-    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-    'Accept-Language': 'en-US,en;q=0.5'
-  };
 
   try {
     // Process tickers in parallel
     await Promise.all(allTickers.map(async (ticker) => {
       try {
-        // 1. Get Yahoo Finance API data first (fast and reliable)
+        // Get Yahoo Finance API data
         const [quote, news] = await Promise.all([
           yahooFinance.quote(ticker),
           yahooFinance.search(ticker, { newsCount: 3 })
@@ -216,51 +172,11 @@ async function scrapeStockNews(tickers: string[]): Promise<NewsItem[]> {
           });
         }
 
-        // 2. Try web scraping if we don't have enough headlines
-        if (headlines.filter(h => h.stock === ticker).length < 3) {
-          for (const source of NEWS_SOURCES) {
-            try {
-              const url = source.url.replace('{ticker}', ticker.toLowerCase());
-              const response = await axios.get(url, {
-                headers,
-                timeout: 5000,
-                maxRedirects: 3
-              });
-
-              if (response.status === 200) {
-                const $ = cheerio.load(response.data);
-                $(source.selectors.article).slice(0, 3).each((_, element) => {
-                  const headline = $(element).find(source.selectors.headline).text().trim();
-                  let url = $(element).find(source.selectors.link).attr('href');
-                  
-                  if (headline && url) {
-                    if (!url.startsWith('http')) {
-                      url = source.baseUrl + (url.startsWith('/') ? '' : '/') + url;
-                    }
-                    
-                    // Only add if we don't already have this headline
-                    if (!headlines.some(h => h.stock === ticker && h.headline === headline)) {
-                      headlines.push({
-                        stock: ticker,
-                        headline,
-                        url
-                      });
-                    }
-                  }
-                });
-              }
-            } catch (error) {
-              console.error(`Error scraping ${source.url} for ${ticker}:`, error);
-              continue;
-            }
-          }
-        }
-
-        // Add default headline if we still don't have any
+        // Add default headline if we don't have any
         if (!headlines.some(h => h.stock === ticker)) {
           headlines.push({
             stock: ticker,
-            headline: `Analyzing market trends for ${ticker}`,
+            headline: `Market analysis for ${ticker}`,
             url: `https://finance.yahoo.com/quote/${ticker}`
           });
         }
