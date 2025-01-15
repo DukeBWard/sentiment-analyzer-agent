@@ -11,10 +11,7 @@ const openai = new OpenAI({
 
 const DEFAULT_TICKERS = ['AAPL', 'MSFT', 'GOOGL', 'AMZN', 'META', 'TSLA', 'NVDA', 'AMD', 'INTC', 'CRM', 'NFLX']
 
-// Add at the top with other types
 type TimeRange = '1d' | '5d' | '1mo' | '1y'
-
-// Add types at the top
 type NewsItem = {
   stock: string;
   headline: string;
@@ -54,13 +51,7 @@ type NewsSource = {
   baseUrl?: string;
 }
 
-type Headers = Record<string, string>;
-type ChartData = { timestamp: string; price: number | null };
-
-type NewsHeadline = {
-  headline: string;
-  url?: string;
-};
+type ChartData = { timestamp: string; price: number | null }
 
 const NEWS_SOURCES: NewsSource[] = [
   {
@@ -135,17 +126,14 @@ async function getStockData(ticker: string, range: TimeRange = '1d') {
       modules: ['price', 'summaryDetail', 'defaultKeyStatistics', 'financialData']
     })
     
-    // Add detailed logging
-    console.log('Quote Result:', JSON.stringify(quote, null, 2))
-    console.log('Summary Result:', JSON.stringify(quoteSummaryResult, null, 2))
-    
     // Configure interval based on range
-    const interval = range === '1d' ? '5m' : 
-                    range === '5d' ? '15m' :
-                    range === '1mo' ? '1d' : 
-                    '1d'
+    const interval =
+      range === '1d' ? '5m'
+      : range === '5d' ? '15m'
+      : range === '1mo' ? '1d'
+      : '1d'
     
-    // Fetch intraday data using v8 API with proper headers
+    // Fetch intraday data using v8 API
     const response = await axios.get(
       `https://query1.finance.yahoo.com/v8/finance/chart/${ticker}`, {
         params: {
@@ -154,7 +142,7 @@ async function getStockData(ticker: string, range: TimeRange = '1d') {
           includePrePost: range === '1d'
         },
         headers: {
-          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+          'User-Agent': 'Mozilla/5.0'
         }
       }
     )
@@ -168,21 +156,16 @@ async function getStockData(ticker: string, range: TimeRange = '1d') {
     const prices = chartData.indicators.quote[0].close || []
     
     const validChartData = timestamps
-      .map((timestamp: number, index: number) => ({
-        timestamp: new Date(timestamp * 1000).toISOString(),
-        price: prices[index] || null
+      .map((ts: number, i: number) => ({
+        timestamp: new Date(ts * 1000).toISOString(),
+        price: prices[i] || null
       }))
-      .filter((data: any) => data.price !== null)
+      .filter((d: any) => d.price !== null)
 
-    // Access the correct data structure from quoteSummary
+    // Extract data
     const summaryDetail = (quoteSummaryResult as any).summaryDetail as YahooSummaryDetail || {}
     const defaultKeyStatistics = (quoteSummaryResult as any).defaultKeyStatistics as YahooKeyStats || {}
     const financialData = (quoteSummaryResult as any).financialData as YahooFinancialData || {}
-
-    // Log the raw data structures
-    console.log('Raw Summary Detail:', JSON.stringify(summaryDetail, null, 2))
-    console.log('Raw Key Stats:', JSON.stringify(defaultKeyStatistics, null, 2))
-    console.log('Raw Financial Data:', JSON.stringify(financialData, null, 2))
 
     const details = {
       marketCap: summaryDetail?.marketCap,
@@ -200,9 +183,6 @@ async function getStockData(ticker: string, range: TimeRange = '1d') {
       profitMargin: financialData?.profitMargins
     }
 
-    // Log the final details object
-    console.log('Final Details Object:', details)
-
     return {
       price: quote.regularMarketPrice || 0,
       change: quote.regularMarketChange || 0,
@@ -216,29 +196,29 @@ async function getStockData(ticker: string, range: TimeRange = '1d') {
   }
 }
 
+/**
+ * Scrapes headlines from multiple news sources.
+ * Any headline that contains the ticker (case-insensitive) will be pushed to that ticker’s array.
+ */
 async function scrapeStockNews(tickers: string[]): Promise<NewsItem[]> {
+  // Merge user-provided tickers with defaults
   const allTickers: string[] = [...new Set([...DEFAULT_TICKERS, ...tickers])]
   const headers = {
-    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+    'User-Agent': 'Mozilla/5.0',
     'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
     'Accept-Language': 'en-US,en;q=0.5',
-    'Accept-Encoding': 'gzip, deflate, br',
-    'Connection': 'keep-alive',
-    'Cache-Control': 'no-cache',
-    'Pragma': 'no-cache',
-    'Upgrade-Insecure-Requests': '1'
+    'Accept-Encoding': 'gzip, deflate, br'
   }
 
   try {
     // Scrape all news sources in parallel
     const allHeadlinesPromises = NEWS_SOURCES.map(async (source) => {
       try {
-        console.log(`Scraping ${source.url}...`)
         const response = await axios.get(source.url, { 
           headers,
           maxRedirects: 5,
           timeout: 15000
-        }).catch(async error => {
+        }).catch(async (error) => {
           console.error(`Failed to fetch ${source.url}:`, error.message)
           if (error.response?.status === 429 || error.code === 'ECONNABORTED') {
             console.log(`Retrying ${source.url} after timeout...`)
@@ -254,59 +234,40 @@ async function scrapeStockNews(tickers: string[]): Promise<NewsItem[]> {
         }
 
         const $ = cheerio.load(response.data)
-        console.log(`Loaded HTML from ${source.url}, searching for articles...`)
         const headlines: NewsItem[] = []
 
         $(source.selectors.article).each((_, element) => {
           const $element = $(element)
-          const headline = source.selectors.headline ? 
-            $element.find(source.selectors.headline).text().trim() :
-            $element.text().trim()
-          
-          let url = source.selectors.link ? 
-            $element.find(source.selectors.link).attr('href') || 
-            $element.attr('href') : ''
+          const headline = source.selectors.headline 
+            ? $element.find(source.selectors.headline).text().trim()
+            : $element.text().trim()
+
+          let url = source.selectors.link 
+            ? $element.find(source.selectors.link).attr('href') || $element.attr('href')
+            : ''
 
           if (url && source.baseUrl && !url.startsWith('http')) {
+            // Make absolute URL
             url = source.baseUrl + (url.startsWith('/') ? '' : '/') + url
           }
-          
-          if (headline && url) {
-            console.log(`Found article: ${headline}`)
-            const headlineLower = headline.toLowerCase()
-            
-            // Check each ticker's search terms
-            for (const ticker of allTickers) {
-              const searchQuery = getSearchQuery(ticker)
-              const searchTerms = searchQuery.toLowerCase().split(/\s+(?:OR|AND|-)\s+/)
-              
-              const isRelevant = searchTerms.some(term => {
-                if (term.startsWith('(')) {
-                  // Handle grouped terms (any match)
-                  const terms = term.slice(1).split(' ')
-                  return terms.some(t => headlineLower.includes(t.toLowerCase()))
-                } else if (term.startsWith('-')) {
-                  // Handle exclusion terms
-                  return !headlineLower.includes(term.slice(1))
-                } else {
-                  // Handle regular terms
-                  return headlineLower.includes(term.toLowerCase())
-                }
-              })
 
-              // Check for exclusion terms separately to ensure they're all respected
-              const exclusionTerms = searchTerms.filter(term => term.startsWith('-'))
-              const hasNoExclusions = exclusionTerms.every(term => 
-                !headlineLower.includes(term.slice(1).toLowerCase())
-              )
-              
-              if (isRelevant && hasNoExclusions && !headlines.some(h => h.headline === headline)) {
+          // For each ticker, check if the headline mentions it
+          if (headline && url) {
+            const headlineLower = headline.toLowerCase()
+
+            for (const ticker of allTickers) {
+              if (
+                // Simple substring check
+                headlineLower.includes(ticker.toLowerCase()) &&
+                // Avoid duplicates
+                !headlines.some(h => h.headline === headline)
+              ) {
                 headlines.push({
                   stock: ticker,
                   headline,
                   url
                 })
-                break // Stop checking other tickers once we've found a match
+                break
               }
             }
           }
@@ -322,7 +283,7 @@ async function scrapeStockNews(tickers: string[]): Promise<NewsItem[]> {
     const allHeadlinesArrays = await Promise.all(allHeadlinesPromises)
     const headlines = allHeadlinesArrays.flat()
 
-    // Add default headlines for stocks that don't have any news
+    // If a ticker wasn't mentioned at all, give it a default headline
     for (const ticker of allTickers) {
       if (!headlines.some((news: NewsItem) => news.stock === ticker)) {
         headlines.push({
@@ -342,22 +303,6 @@ async function scrapeStockNews(tickers: string[]): Promise<NewsItem[]> {
     }))
   }
 }
-
-const getSearchQuery = (ticker: string) => {
-  const tickerMap: { [key: string]: string } = {
-    'META': '(Meta OR Facebook OR Instagram OR WhatsApp OR "Mark Zuckerberg") -metal -metals -metallurgical',
-    'AAPL': '(Apple OR iPhone OR iPad OR MacBook OR "Tim Cook") -fruit -tree -food',
-    'GOOGL': '(Google OR Alphabet OR Android OR Chrome OR "Sundar Pichai") -search',
-    'MSFT': '(Microsoft OR Windows OR Azure OR Xbox OR "Satya Nadella") -window',
-    'AMZN': '(Amazon OR AWS OR Prime OR "Andy Jassy" OR "Jeff Bezos") -river -forest',
-    'TSLA': '(Tesla OR "Elon Musk" OR Cybertruck OR "Model 3" OR "Model Y") -coil',
-    'NVDA': '(Nvidia OR GeForce OR CUDA OR "Jensen Huang" OR RTX) -video',
-    'AMD': '(AMD OR Ryzen OR Radeon OR "Lisa Su" OR "Advanced Micro Devices") -medical',
-    'INTC': '(Intel OR "Intel Core" OR Xeon OR "Pat Gelsinger" OR "Intel Arc") -intelligence',
-    'NFLX': '(Netflix OR "Reed Hastings" OR "Ted Sarandos" OR streaming) -stream'
-  };
-  return tickerMap[ticker] || ticker;
-};
 
 export async function POST(req: Request) {
   try {
@@ -409,8 +354,7 @@ export async function GET(request: Request) {
 ]
 
 Headlines to analyze:
-${stockNews.map((n: NewsItem) => `${n.stock}: ${n.headline}`).join('\n')}
-`
+${stockNews.map((n: NewsItem) => `${n.stock}: ${n.headline}`).join('\n')}`
 
     const completion = await openai.chat.completions.create({
       model: 'gpt-4o-mini',
@@ -437,7 +381,7 @@ ${stockNews.map((n: NewsItem) => `${n.stock}: ${n.headline}`).join('\n')}
       throw new Error('Invalid sentiment data format')
     }
 
-    // Update the combining logic to keep track of articles
+    // Combine sentiments per ticker
     const combinedSentiments = sentimentData.reduce((acc: any[], curr: any) => {
       const existing = acc.find(item => item.stock === curr.stock)
       if (existing) {
@@ -448,10 +392,13 @@ ${stockNews.map((n: NewsItem) => `${n.stock}: ${n.headline}`).join('\n')}
           url: stockNews.find(n => n.headline === curr.headline)?.url
         })
         existing.count = existing.articles.length
-        existing.totalSentiment = existing.articles.reduce((sum: number, article: any) => sum + article.sentimentScore, 0)
+        existing.totalSentiment = existing.articles.reduce(
+          (sum: number, article: any) => sum + article.sentimentScore,
+          0
+        )
         existing.sentimentScore = existing.totalSentiment / existing.count
       } else {
-        acc.push({ 
+        acc.push({
           ...curr,
           articles: [{
             headline: curr.headline,
@@ -478,8 +425,8 @@ ${stockNews.map((n: NewsItem) => `${n.stock}: ${n.headline}`).join('\n')}
     // STEP 4: Sort stocks by sentimentScore descending
     enrichedData.sort((a: any, b: any) => b.sentimentScore - a.sentimentScore)
 
-    // STEP 5: Get top results (including all custom tickers)
-    const customTickerResults = enrichedData.filter((item: any) => 
+    // STEP 5: Keep any custom tickers + top others
+    const customTickerResults = enrichedData.filter((item: any) =>
       customTickers.includes(item.stock)
     )
     const otherResults = enrichedData
@@ -497,4 +444,3 @@ ${stockNews.map((n: NewsItem) => `${n.stock}: ${n.headline}`).join('\n')}
     )
   }
 }
-
