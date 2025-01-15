@@ -82,6 +82,7 @@ export default function Home() {
     const stored = localStorage.getItem('remainingCalls')
     const lastReset = localStorage.getItem('lastResetDate')
     const today = new Date().toDateString()
+    const lastAnalysis = localStorage.getItem('lastAnalysis')
     
     // Reset if it's a new day
     if (lastReset !== today) {
@@ -90,6 +91,10 @@ export default function Home() {
       setRemainingCalls(5)
     } else if (stored) {
       setRemainingCalls(parseInt(stored))
+      // Load last analysis if no refreshes left
+      if (parseInt(stored) === 0 && lastAnalysis) {
+        setStocks(JSON.parse(lastAnalysis))
+      }
     }
   }, [])
 
@@ -111,6 +116,17 @@ export default function Home() {
   }
 
   const fetchStocks = useCallback(async () => {
+    const currentRemaining = parseInt(localStorage.getItem('remainingCalls') || '5')
+    
+    if (currentRemaining === 0) {
+      setError('No refreshes left today. Showing last analysis.')
+      const lastAnalysis = localStorage.getItem('lastAnalysis')
+      if (lastAnalysis) {
+        setStocks(JSON.parse(lastAnalysis))
+      }
+      return
+    }
+
     setLoading(true)
     setError('')
     const startTime = Date.now()
@@ -130,6 +146,7 @@ export default function Home() {
         throw new Error(result.error)
       }
       setStocks(result.data)
+      localStorage.setItem('lastAnalysis', JSON.stringify(result.data))
       updateRemainingCalls(result.remaining)
       setApiCallTime(Date.now() - startTime)
     } catch (err: any) {
@@ -142,8 +159,13 @@ export default function Home() {
   }, [customTickers, selectedRange])
 
   useEffect(() => {
-    fetchStocks()
-  }, [fetchStocks])
+    const lastAnalysis = localStorage.getItem('lastAnalysis')
+    if (lastAnalysis) {
+      setStocks(JSON.parse(lastAnalysis))
+    } else {
+      fetchStocks()
+    }
+  }, [])
 
   const formatNumber = (num: number | undefined, decimals: number = 2) => {
     if (num === undefined) return 'N/A'
@@ -428,7 +450,7 @@ export default function Home() {
                       </TableHeader>
                       <TableBody>
                         {selectedStock.articles?.map((article: Article, index: number) => (
-                          <TableRow key={index} className="border-gray-700">
+                          <TableRow key={index} className="border-gray-700 hover:bg-gray-800/50">
                             <TableCell className="font-jetbrains">
                               {article.url ? (
                                 <a 

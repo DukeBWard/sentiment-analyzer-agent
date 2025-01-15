@@ -371,7 +371,7 @@ ${stockNews.map((n: NewsItem) => `${n.stock}: ${n.headline}`).join('\n')}`;
     let sentimentData = []
     try {
       const parsedContent = JSON.parse(content)
-      console.log('OpenAI Response:', parsedContent)
+      //console.log('OpenAI Response:', parsedContent)
       
       if (!parsedContent.headlines || !Array.isArray(parsedContent.headlines)) {
         console.error('Invalid response structure:', parsedContent)
