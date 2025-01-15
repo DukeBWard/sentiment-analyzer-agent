@@ -37,41 +37,49 @@ async function getStockData(ticker: string, range: TimeRange = '1d') {
 
   for (let attempt = 0; attempt < maxRetries; attempt++) {
     try {
-      // Add delay between retries
       if (attempt > 0) {
         await retryDelay(2000 * attempt);
       }
 
       const [quote, quoteSummaryResult] = await Promise.all([
-        yahooFinance.quote(ticker).catch(() => null),
-        yahooFinance.quoteSummary(ticker, {
-          modules: ['price', 'summaryDetail', 'defaultKeyStatistics', 'financialData']
-        }).catch(() => null)
+        Promise.race([
+          yahooFinance.quote(ticker),
+          new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout')), 5000))
+        ]),
+        Promise.race([
+          yahooFinance.quoteSummary(ticker, {
+            modules: ['price', 'summaryDetail', 'defaultKeyStatistics', 'financialData']
+          }),
+          new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout')), 5000))
+        ])
       ]);
 
       if (!quote) {
         throw new Error('Failed to fetch quote data');
       }
 
-      // Configure interval based on range
       const interval = range === '1d' ? '5m' : 
                       range === '5d' ? '15m' :
                       range === '1mo' ? '1d' : 
                       '1d';
       
-      const chartResponse = await axios.get(
-        `https://query1.finance.yahoo.com/v8/finance/chart/${ticker}`,
-        {
-          params: {
-            interval,
-            range,
-            includePrePost: range === '1d'
-          },
-          headers: {
-            'User-Agent': 'Mozilla/5.0'
+      const chartResponse = await Promise.race([
+        axios.get(
+          `https://query1.finance.yahoo.com/v8/finance/chart/${ticker}`,
+          {
+            params: {
+              interval,
+              range,
+              includePrePost: range === '1d'
+            },
+            headers: {
+              'User-Agent': 'Mozilla/5.0'
+            },
+            timeout: 5000
           }
-        }
-      ).catch(() => null);
+        ),
+        new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout')), 5000))
+      ]).catch(() => null);
 
       if (!chartResponse?.data?.chart?.result?.[0]) {
         console.warn(`No chart data available for ${ticker}`);
@@ -127,56 +135,70 @@ async function getStockData(ticker: string, range: TimeRange = '1d') {
 async function scrapeStockNews(tickers: string[]): Promise<NewsItem[]> {
   const allTickers = [...new Set([...DEFAULT_TICKERS, ...tickers])];
   const headlines: NewsItem[] = [];
+  const BATCH_SIZE = 5; // Process 5 tickers at a time
 
   try {
-    // Process tickers in parallel
-    await Promise.all(allTickers.map(async (ticker) => {
-      try {
-        // Get Yahoo Finance API data
-        const [quote, news] = await Promise.all([
-          yahooFinance.quote(ticker),
-          yahooFinance.search(ticker, { newsCount: 3 })
-        ]);
+    // Process tickers in batches
+    for (let i = 0; i < allTickers.length; i += BATCH_SIZE) {
+      const batch = allTickers.slice(i, i + BATCH_SIZE);
+      await Promise.all(batch.map(async (ticker) => {
+        try {
+          // Get Yahoo Finance API data with timeout
+          const [quote, news] = await Promise.all([
+            Promise.race([
+              yahooFinance.quote(ticker),
+              new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout')), 5000))
+            ]),
+            Promise.race([
+              yahooFinance.search(ticker, { newsCount: 3 }),
+              new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout')), 5000))
+            ])
+          ]);
 
-        // Add price movement headline
-        if (quote) {
+          // Add price movement headline
+          if (quote) {
+            headlines.push({
+              stock: ticker,
+              headline: `${ticker} trading at $${quote.regularMarketPrice?.toFixed(2)} with ${quote.regularMarketChangePercent?.toFixed(2)}% change`,
+              url: `https://finance.yahoo.com/quote/${ticker}`
+            });
+          }
+
+          // Add Yahoo Finance news headlines
+          if (news.news && news.news.length > 0) {
+            news.news.forEach(item => {
+              if (item.title) {
+                headlines.push({
+                  stock: ticker,
+                  headline: item.title,
+                  url: item.link || `https://finance.yahoo.com/quote/${ticker}`
+                });
+              }
+            });
+          }
+
+          // Add default headline if we don't have any
+          if (!headlines.some(h => h.stock === ticker)) {
+            headlines.push({
+              stock: ticker,
+              headline: `Market analysis for ${ticker}`,
+              url: `https://finance.yahoo.com/quote/${ticker}`
+            });
+          }
+        } catch (error) {
+          console.error(`Error processing ${ticker}:`, error);
           headlines.push({
             stock: ticker,
-            headline: `${ticker} trading at $${quote.regularMarketPrice?.toFixed(2)} with ${quote.regularMarketChangePercent?.toFixed(2)}% change`,
+            headline: `Market analysis for ${ticker} based on recent performance`,
             url: `https://finance.yahoo.com/quote/${ticker}`
           });
         }
-
-        // Add Yahoo Finance news headlines
-        if (news.news && news.news.length > 0) {
-          news.news.forEach(item => {
-            if (item.title) {
-              headlines.push({
-                stock: ticker,
-                headline: item.title,
-                url: item.link || `https://finance.yahoo.com/quote/${ticker}`
-              });
-            }
-          });
-        }
-
-        // Add default headline if we don't have any
-        if (!headlines.some(h => h.stock === ticker)) {
-          headlines.push({
-            stock: ticker,
-            headline: `Market analysis for ${ticker}`,
-            url: `https://finance.yahoo.com/quote/${ticker}`
-          });
-        }
-      } catch (error) {
-        console.error(`Error processing ${ticker}:`, error);
-        headlines.push({
-          stock: ticker,
-          headline: `Market analysis for ${ticker} based on recent performance`,
-          url: `https://finance.yahoo.com/quote/${ticker}`
-        });
+      }));
+      // Add a small delay between batches
+      if (i + BATCH_SIZE < allTickers.length) {
+        await new Promise(resolve => setTimeout(resolve, 1000));
       }
-    }));
+    }
 
     return headlines;
   } catch (error) {
