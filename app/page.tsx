@@ -201,10 +201,7 @@ export default function Home() {
   )
 
   return (
-    <main className="min-h-screen bg-gradient-to-br from-gray-900 via-gray-800 to-gray-900 relative overflow-hidden">
-      {/* Gradient Dot Background */}
-      <div className="absolute inset-0 w-full h-full bg-[radial-gradient(#ffffff33_1px,transparent_1px)] [background-size:16px_16px] [mask-image:radial-gradient(ellipse_50%_50%_at_50%_50%,black,transparent)]" />
-      
+    <div className="flex-1">
       <div className="container mx-auto p-4 sm:p-8 relative">
         <Card className="mb-8 bg-gray-900/50 backdrop-blur-sm border-gray-700">
           <CardHeader>
@@ -482,6 +479,6 @@ export default function Home() {
           </DialogContent>
         </Dialog>
       </div>
-    </main>
+    </div>
   )
 }
