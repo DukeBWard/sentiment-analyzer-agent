@@ -282,29 +282,11 @@ export async function POST(req: Request) {
 }
 
 export async function GET(request: Request): Promise<NextResponse> {
-  // Get IP address from request headers
-  const forwardedFor = request.headers.get('x-forwarded-for');
-  const ip = forwardedFor ? forwardedFor.split(',')[0] : 'unknown';
-  
-  // Check rate limit
-  const { remaining, allowed } = getRateLimit(ip);
-  if (!allowed) {
-    return NextResponse.json(
-      { error: 'Rate limit exceeded. Please try again tomorrow.', remaining },
-      { status: 429 }
-    );
-  }
-
-  if (!process.env.OPENAI_API_KEY) {
-    return NextResponse.json(
-      { error: 'OpenAI API key not configured' },
-      { status: 500 }
-    )
-  }
-
   const { searchParams } = new URL(request.url)
   const customTickers = searchParams.get('tickers')?.split(',') || []
   const range = (searchParams.get('range') || '1d') as TimeRange
+  const graphsOnly = searchParams.get('graphsOnly') === 'true'
+  let remainingCalls = 5 // Default value
   
   if (!VALID_TIME_RANGES.includes(range)) {
     return NextResponse.json(
@@ -313,10 +295,31 @@ export async function GET(request: Request): Promise<NextResponse> {
     )
   }
 
-  try {
-    // Increment rate limit before processing
-    incrementRateLimit(ip);
+  // For graph-only updates, don't increment rate limit or require OpenAI key
+  if (!graphsOnly) {
+    // Get IP address from request headers
+    const forwardedFor = request.headers.get('x-forwarded-for');
+    const ip = forwardedFor ? forwardedFor.split(',')[0] : 'unknown';
     
+    // Check rate limit
+    const { remaining, allowed } = getRateLimit(ip);
+    remainingCalls = remaining;
+    if (!allowed) {
+      return NextResponse.json(
+        { error: 'Rate limit exceeded. Please try again tomorrow.', remaining },
+        { status: 429 }
+      );
+    }
+
+    if (!process.env.OPENAI_API_KEY) {
+      return NextResponse.json(
+        { error: 'OpenAI API key not configured' },
+        { status: 500 }
+      )
+    }
+  }
+
+  try {
     // Process all tickers in parallel
     const allTickers = [...new Set([...DEFAULT_TICKERS, ...customTickers])]
     
@@ -324,10 +327,20 @@ export async function GET(request: Request): Promise<NextResponse> {
     const stockResults = await Promise.all(
       allTickers.map((ticker, index) => 
         new Promise<StockResult>(resolve => 
-          setTimeout(() => resolve(processStock(ticker)), index * 200)
+          setTimeout(() => resolve(processStock(ticker, range)), index * 200)
         )
       )
     );
+
+    if (graphsOnly) {
+      return NextResponse.json({ data: stockResults })
+    }
+
+    // Only increment rate limit for full analysis
+    const forwardedFor = request.headers.get('x-forwarded-for');
+    const ip = forwardedFor ? forwardedFor.split(',')[0] : 'unknown';
+    const { remaining: remainingCalls } = getRateLimit(ip);
+    incrementRateLimit(ip);
 
     // Combine all news items
     const stockNews = stockResults.flatMap(result => result.news);
@@ -449,17 +462,17 @@ ${stockNews.map((n: NewsItem) => `${n.stock}: ${n.headline}`).join('\n')}`;
 
     const finalResults = [...customTickerResults, ...otherResults]
 
-    return NextResponse.json({ 
-      data: finalResults, 
-      remaining: remaining - 1  // Include remaining requests in response
+    return NextResponse.json({
+      data: finalResults,
+      remaining: remainingCalls - 1
     })
   } catch (error: any) {
-    console.error('Error in sentiment analysis:', error)
-    const statusCode = error.status || 500
-    const message = error.response?.data?.error?.message || error.message || 'Failed to analyze sentiment'
+    const message = error instanceof Error ? error.message : 'An unexpected error occurred';
+    const statusCode = error.status || 500;
+    
     return NextResponse.json({ 
       error: message, 
-      remaining: remaining - 1  // Include remaining requests even in error response
+      remaining: remainingCalls - 1
     }, { status: statusCode })
   }
 }

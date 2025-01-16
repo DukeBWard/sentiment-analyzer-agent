@@ -22,6 +22,7 @@ import {
   TableRow,
 } from "@/components/ui/table"
 import { Skeleton } from "@/components/ui/skeleton"
+import { X } from 'lucide-react';
 
 type StockDetails = {
   marketCap?: number
@@ -115,6 +116,56 @@ export default function Home() {
     setCustomTickers(customTickers.filter(t => t !== ticker))
   }
 
+  const updateGraphs = useCallback(async () => {
+    setLoading(true)
+    try {
+      const params = new URLSearchParams()
+      if (customTickers.length > 0) {
+        params.append('tickers', customTickers.join(','))
+      }
+      params.append('range', selectedRange)
+      params.append('graphsOnly', 'true')
+      
+      const response = await fetch(`/api/stocks?${params}`)
+      if (!response.ok) {
+        throw new Error('Failed to fetch data')
+      }
+      const result = await response.json()
+      if (result.error) {
+        throw new Error(result.error)
+      }
+      
+      // Update only the chart data for existing stocks
+      setStocks(prevStocks => 
+        prevStocks.map(stock => {
+          const updatedStock = result.data.find(s => s.ticker === stock.stock)
+          if (updatedStock?.stockData) {
+            return {
+              ...stock,
+              stockData: stock.stockData ? {
+                ...stock.stockData,
+                chartData: updatedStock.stockData.chartData
+              } : updatedStock.stockData
+            }
+          }
+          return stock
+        })
+      )
+    } catch (err: any) {
+      console.error(err)
+      setError(err.message)
+    } finally {
+      setLoading(false)
+    }
+  }, [selectedRange, customTickers])
+
+  // Update graphs when timeframe changes
+  useEffect(() => {
+    if (stocks.length > 0) {
+      updateGraphs()
+    }
+  }, [selectedRange])
+
   const fetchStocks = useCallback(async () => {
     const currentRemaining = parseInt(localStorage.getItem('remainingCalls') || '5')
     
@@ -158,12 +209,11 @@ export default function Home() {
     }
   }, [customTickers, selectedRange])
 
+  // Load initial data
   useEffect(() => {
     const lastAnalysis = localStorage.getItem('lastAnalysis')
     if (lastAnalysis) {
       setStocks(JSON.parse(lastAnalysis))
-    } else {
-      fetchStocks()
     }
   }, [])
 
@@ -361,7 +411,24 @@ export default function Home() {
               <>
                 <DialogHeader>
                   <DialogTitle className="text-xl sm:text-2xl flex items-center justify-between font-jetbrains">
-                    <span>{selectedStock.stock}</span>
+                    <div className="flex items-center gap-4">
+                      <span>{selectedStock.stock}</span>
+                      {customTickers.includes(selectedStock.stock) && (
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={(e) => {
+                            e.stopPropagation()
+                            removeCustomTicker(selectedStock.stock)
+                            setSelectedStock(null)
+                          }}
+                          className="text-gray-400 hover:text-red-400 transition-colors"
+                        >
+                          <X className="w-4 h-4" />
+                          <span className="sr-only">Remove Ticker</span>
+                        </Button>
+                      )}
+                    </div>
                     {selectedStock.stockData && (
                       <span className={`text-base sm:text-lg ${selectedStock.stockData.change >= 0 ? 'text-green-400' : 'text-red-400'}`}>
                         ${selectedStock.stockData.price.toFixed(2)}
