@@ -68,6 +68,8 @@ type StockSentiment = {
 type TimeRange = '1d' | '5d' | '1mo' | '1y'
 type FormatterValue = string | number;
 
+const DEFAULT_TICKERS = ['AAPL', 'MSFT', 'GOOGL', 'AMZN', 'META']
+
 export default function Home() {
   const [stocks, setStocks] = useState<StockSentiment[]>([])
   const [loading, setLoading] = useState(false)
@@ -78,6 +80,16 @@ export default function Home() {
   const [selectedStock, setSelectedStock] = useState<StockSentiment | null>(null)
   const [apiCallTime, setApiCallTime] = useState<number | null>(null)
   const [remainingCalls, setRemainingCalls] = useState<number>(5)
+  const [hasNewTickers, setHasNewTickers] = useState(false)
+
+  useEffect(() => {
+    // Check if there are new tickers to analyze
+    const lastAnalysis = localStorage.getItem('lastAnalysis')
+    const existingStocks = lastAnalysis ? JSON.parse(lastAnalysis) : []
+    const existingTickers = existingStocks.map((s: StockSentiment) => s.stock)
+    const newTickers = [...DEFAULT_TICKERS, ...customTickers].filter(ticker => !existingTickers.includes(ticker))
+    setHasNewTickers(newTickers.length > 0)
+  }, [customTickers])
 
   useEffect(() => {
     const stored = localStorage.getItem('remainingCalls')
@@ -107,13 +119,27 @@ export default function Home() {
 
   const addCustomTicker = () => {
     if (customTicker && !customTickers.includes(customTicker.toUpperCase())) {
-      setCustomTickers([...customTickers, customTicker.toUpperCase()])
+      const newTickers = [...customTickers, customTicker.toUpperCase()]
+      setCustomTickers(newTickers)
+      localStorage.setItem('customTickers', JSON.stringify(newTickers))
       setCustomTicker('')
     }
   }
 
   const removeCustomTicker = (ticker: string) => {
-    setCustomTickers(customTickers.filter(t => t !== ticker))
+    const newTickers = customTickers.filter(t => t !== ticker)
+    setCustomTickers(newTickers)
+    localStorage.setItem('customTickers', JSON.stringify(newTickers))
+    
+    // Remove the stock from display and localStorage
+    const updatedStocks = stocks.filter(s => s.stock !== ticker || DEFAULT_TICKERS.includes(s.stock))
+    setStocks(updatedStocks)
+    localStorage.setItem('lastAnalysis', JSON.stringify(updatedStocks))
+    
+    // Close modal if the removed stock was selected
+    if (selectedStock?.stock === ticker) {
+      setSelectedStock(null)
+    }
   }
 
   const updateGraphs = useCallback(async () => {
@@ -182,10 +208,23 @@ export default function Home() {
     setError('')
     const startTime = Date.now()
     try {
-      const params = new URLSearchParams()
-      if (customTickers.length > 0) {
-        params.append('tickers', customTickers.join(','))
+      // Get existing analysis from localStorage
+      const lastAnalysis = localStorage.getItem('lastAnalysis')
+      const existingStocks = lastAnalysis ? JSON.parse(lastAnalysis) : []
+      
+      // Find tickers that need analysis (not in existing data)
+      const existingTickers = existingStocks.map((s: StockSentiment) => s.stock)
+      const tickersToAnalyze = [...DEFAULT_TICKERS, ...customTickers].filter(ticker => !existingTickers.includes(ticker))
+      
+      if (tickersToAnalyze.length === 0) {
+        // If no new tickers, just update the state with existing data
+        setStocks(existingStocks)
+        setApiCallTime(0)
+        return
       }
+
+      const params = new URLSearchParams()
+      params.append('tickers', tickersToAnalyze.join(','))
       params.append('range', selectedRange)
       
       const response = await fetch(`/api/stocks?${params}`)
@@ -196,8 +235,15 @@ export default function Home() {
       if (result.error) {
         throw new Error(result.error)
       }
-      setStocks(result.data)
-      localStorage.setItem('lastAnalysis', JSON.stringify(result.data))
+
+      // Combine new analysis with existing data
+      const updatedStocks = [
+        ...existingStocks.filter((s: StockSentiment) => customTickers.includes(s.stock)),
+        ...result.data
+      ]
+
+      setStocks(updatedStocks)
+      localStorage.setItem('lastAnalysis', JSON.stringify(updatedStocks))
       updateRemainingCalls(result.remaining)
       setApiCallTime(Date.now() - startTime)
     } catch (err: any) {
@@ -212,8 +258,30 @@ export default function Home() {
   // Load initial data
   useEffect(() => {
     const lastAnalysis = localStorage.getItem('lastAnalysis')
+    const storedCustomTickers = localStorage.getItem('customTickers')
+    
+    if (storedCustomTickers) {
+      setCustomTickers(JSON.parse(storedCustomTickers))
+    }
+    
     if (lastAnalysis) {
       setStocks(JSON.parse(lastAnalysis))
+    } else {
+      // If no stored analysis, fetch default tickers
+      const params = new URLSearchParams()
+      params.append('tickers', DEFAULT_TICKERS.join(','))
+      params.append('range', selectedRange)
+      
+      fetch(`/api/stocks?${params}`)
+        .then(response => response.json())
+        .then(result => {
+          if (!result.error) {
+            setStocks(result.data)
+            localStorage.setItem('lastAnalysis', JSON.stringify(result.data))
+            updateRemainingCalls(result.remaining)
+          }
+        })
+        .catch(console.error)
     }
   }, [])
 
@@ -282,7 +350,12 @@ export default function Home() {
                   <Button
                     key={ticker}
                     variant="outline"
-                    onClick={() => removeCustomTicker(ticker)}
+                    onClick={() => {
+                      removeCustomTicker(ticker)
+                      if (selectedStock?.stock === ticker) {
+                        setSelectedStock(null)
+                      }
+                    }}
                     className="bg-gray-800/50 border-gray-700 text-white hover:bg-gray-700 hover:text-white font-jetbrains"
                   >
                     {ticker}
@@ -306,10 +379,10 @@ export default function Home() {
               <div className="flex w-full sm:w-auto items-center gap-2">
                 <Button 
                   onClick={fetchStocks} 
-                  disabled={loading}
-                  className="w-full sm:w-auto bg-blue-600 hover:bg-blue-700 font-jetbrains"
+                  disabled={loading || !hasNewTickers || remainingCalls === 0}
+                  className="w-full sm:w-auto font-jetbrains bg-blue-600 hover:bg-blue-700 disabled:bg-gray-600 disabled:hover:bg-gray-600 disabled:cursor-not-allowed"
                 >
-                  {loading ? 'Analyzing...' : 'Refresh Analysis'}
+                  {loading ? 'Analyzing...' : hasNewTickers ? 'Refresh Analysis' : 'No New Tickers'}
                 </Button>
                 <div className="flex items-center text-gray-400 text-xs sm:text-sm font-jetbrains whitespace-nowrap">
                   <svg className="w-4 h-4 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">

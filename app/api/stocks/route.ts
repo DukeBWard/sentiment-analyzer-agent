@@ -350,7 +350,16 @@ export async function GET(request: Request): Promise<NextResponse> {
     }
 
     // Get sentiment analysis from OpenAI
-    const prompt = `Analyze these stock headlines and provide sentiment scores between -1.0 (most negative) and 1.0 (most positive). Return your analysis in a JSON object with a 'headlines' array.
+    const openaiStartTime = Date.now()
+    console.log('Starting OpenAI API call:', new Date().toISOString())
+    
+    // Limit to 3 most recent headlines per stock for faster processing
+    const limitedNews = allTickers.map(ticker => {
+      const tickerNews = stockNews.filter(n => n.stock === ticker).slice(0, 3)
+      return tickerNews
+    }).flat()
+    
+    const prompt = `Analyze these stock headlines and provide sentiment scores between -1.0 (most negative) and 1.0 (most positive). Be concise and direct.
 
 Return ONLY a JSON object in this exact format:
 {
@@ -363,17 +372,18 @@ Return ONLY a JSON object in this exact format:
   ]
 }
 
-For each headline, copy the exact stock symbol and headline text, and add an appropriate sentiment score.
-
-Headlines to analyze:
-${stockNews.map((n: NewsItem) => `${n.stock}: ${n.headline}`).join('\n')}`;
+Headlines:
+${limitedNews.map((n: NewsItem) => `${n.stock}: ${n.headline}`).join('\n')}`;
 
     const completion = await openai.chat.completions.create({
       model: 'gpt-4o-mini',
       messages: [{ role: 'user', content: prompt }],
-      temperature: 0.7,
+      temperature: 0.3,
       response_format: { type: "json_object" }
     });
+
+    const openaiDuration = Date.now() - openaiStartTime
+    console.log(`OpenAI API call completed in ${openaiDuration}ms`)
 
     const content = completion.choices[0]?.message?.content
     if (!content) {
