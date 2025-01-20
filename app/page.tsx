@@ -258,6 +258,7 @@ export default function Home() {
 
   // Load initial data
   useEffect(() => {
+    setLoading(true) // Set loading state immediately
     const lastAnalysis = localStorage.getItem('lastAnalysis')
     const storedCustomTickers = localStorage.getItem('customTickers')
     const analysisTimestamp = localStorage.getItem('analysisTimestamp')
@@ -270,6 +271,7 @@ export default function Home() {
     // Check if analysis is from a previous day
     if (lastAnalysis && analysisTimestamp && analysisTimestamp === today) {
       setStocks(JSON.parse(lastAnalysis))
+      setLoading(false)
     } else {
       // If no stored analysis or it's old, fetch all tickers
       const allTickers = [...DEFAULT_TICKERS, ...(storedCustomTickers ? JSON.parse(storedCustomTickers) : [])]
@@ -288,6 +290,7 @@ export default function Home() {
           }
         })
         .catch(console.error)
+        .finally(() => setLoading(false))
     }
   }, [])
 
