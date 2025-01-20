@@ -206,6 +206,7 @@ export default function Home() {
 
     setLoading(true)
     setError('')
+    setApiCallTime(null) // Reset API call time
     const startTime = Date.now()
     try {
       // Get existing analysis from localStorage
@@ -219,7 +220,7 @@ export default function Home() {
       if (tickersToAnalyze.length === 0) {
         // If no new tickers, just update the state with existing data
         setStocks(existingStocks)
-        setApiCallTime(0)
+        setLoading(false)
         return
       }
 
