@@ -244,6 +244,7 @@ export default function Home() {
 
       setStocks(updatedStocks)
       localStorage.setItem('lastAnalysis', JSON.stringify(updatedStocks))
+      localStorage.setItem('analysisTimestamp', new Date().toDateString())
       updateRemainingCalls(result.remaining)
       setApiCallTime(Date.now() - startTime)
     } catch (err: any) {
@@ -259,17 +260,21 @@ export default function Home() {
   useEffect(() => {
     const lastAnalysis = localStorage.getItem('lastAnalysis')
     const storedCustomTickers = localStorage.getItem('customTickers')
+    const analysisTimestamp = localStorage.getItem('analysisTimestamp')
+    const today = new Date().toDateString()
     
     if (storedCustomTickers) {
       setCustomTickers(JSON.parse(storedCustomTickers))
     }
     
-    if (lastAnalysis) {
+    // Check if analysis is from a previous day
+    if (lastAnalysis && analysisTimestamp && analysisTimestamp === today) {
       setStocks(JSON.parse(lastAnalysis))
     } else {
-      // If no stored analysis, fetch default tickers
+      // If no stored analysis or it's old, fetch all tickers
+      const allTickers = [...DEFAULT_TICKERS, ...(storedCustomTickers ? JSON.parse(storedCustomTickers) : [])]
       const params = new URLSearchParams()
-      params.append('tickers', DEFAULT_TICKERS.join(','))
+      params.append('tickers', allTickers.join(','))
       params.append('range', selectedRange)
       
       fetch(`/api/stocks?${params}`)
@@ -278,6 +283,7 @@ export default function Home() {
           if (!result.error) {
             setStocks(result.data)
             localStorage.setItem('lastAnalysis', JSON.stringify(result.data))
+            localStorage.setItem('analysisTimestamp', today)
             updateRemainingCalls(result.remaining)
           }
         })
