@@ -5,7 +5,6 @@ import { ChatOpenAI } from '@langchain/openai';
 import { createRetrievalChain } from "langchain/chains/retrieval";
 import { createStuffDocumentsChain } from "langchain/chains/combine_documents";
 import { PineconeStore } from '@langchain/pinecone';
-import { Document } from "@langchain/core/documents";
 import { PromptTemplate } from "@langchain/core/prompts";
 
 if (!process.env.OPENAI_API_KEY) {
@@ -52,7 +51,7 @@ export async function POST(req: Request) {
       streaming: true,
     });
 
-    const prompt = PromptTemplate.fromTemplate(`Do not use markdown.  Answer the following question about ${ticker.toUpperCase()} based on the provided context:
+    const prompt = PromptTemplate.fromTemplate(`Do not use markdown. If no specific year is mentioned in the question, assume it refers to the current year (${new Date().getFullYear()}). Answer the following question about ${ticker.toUpperCase()} based on the provided context:
 
 Context: {context}
 Question: {input}

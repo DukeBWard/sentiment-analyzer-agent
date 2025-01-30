@@ -5,6 +5,7 @@ import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { HashLoader } from '@/components/ui/loader';
 
 interface Message {
   role: 'user' | 'assistant';
@@ -90,6 +91,11 @@ export function ChatInterface({ stocks }: { stocks: Array<{ stock: string }> }) 
           </div>
         ))}
         <div ref={messagesEndRef} />
+        {isLoading && (
+          <div className="flex justify-center items-center py-2">
+            <HashLoader className="text-gray-500" />
+          </div>
+        )}
       </div>
       <form onSubmit={handleSubmit} className="flex gap-2">
         <Input
