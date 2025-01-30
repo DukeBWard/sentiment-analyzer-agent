@@ -286,6 +286,7 @@ export async function GET(request: Request): Promise<NextResponse> {
   const customTickers = searchParams.get('tickers')?.split(',') || []
   const range = (searchParams.get('range') || '1d') as TimeRange
   const graphsOnly = searchParams.get('graphsOnly') === 'true'
+  const validateOnly = searchParams.get('validateOnly') === 'true'
   let remainingCalls = 5 // Default value
   
   if (!VALID_TIME_RANGES.includes(range)) {
@@ -295,8 +296,24 @@ export async function GET(request: Request): Promise<NextResponse> {
     )
   }
 
-  // For graph-only updates, don't increment rate limit or require OpenAI key
-  if (!graphsOnly) {
+  try {
+    // Process all tickers in parallel
+    const allTickers = [...new Set([...DEFAULT_TICKERS, ...customTickers])]
+    
+    // Process all stocks in parallel with a small delay between each to avoid rate limits
+    const stockResults = await Promise.all(
+      allTickers.map((ticker, index) => 
+        new Promise<StockResult>(resolve => 
+          setTimeout(() => resolve(processStock(ticker, range)), index * 200)
+        )
+      )
+    );
+
+    // If we only need price updates, return early
+    if (graphsOnly || validateOnly) {
+      return NextResponse.json({ data: stockResults })
+    }
+
     // Get IP address from request headers
     const forwardedFor = request.headers.get('x-forwarded-for');
     const ip = forwardedFor ? forwardedFor.split(',')[0] : 'unknown';
@@ -317,29 +334,8 @@ export async function GET(request: Request): Promise<NextResponse> {
         { status: 500 }
       )
     }
-  }
 
-  try {
-    // Process all tickers in parallel
-    const allTickers = [...new Set([...DEFAULT_TICKERS, ...customTickers])]
-    
-    // Process all stocks in parallel with a small delay between each to avoid rate limits
-    const stockResults = await Promise.all(
-      allTickers.map((ticker, index) => 
-        new Promise<StockResult>(resolve => 
-          setTimeout(() => resolve(processStock(ticker, range)), index * 200)
-        )
-      )
-    );
-
-    if (graphsOnly) {
-      return NextResponse.json({ data: stockResults })
-    }
-
-    // Only increment rate limit for full analysis
-    const forwardedFor = request.headers.get('x-forwarded-for');
-    const ip = forwardedFor ? forwardedFor.split(',')[0] : 'unknown';
-    const { remaining: remainingCalls } = getRateLimit(ip);
+    // Increment rate limit for full analysis
     incrementRateLimit(ip);
 
     // Combine all news items
@@ -394,8 +390,6 @@ ${limitedNews.map((n: NewsItem) => `${n.stock}: ${n.headline}`).join('\n')}`;
     let sentimentData = []
     try {
       const parsedContent = JSON.parse(content)
-      //console.log('OpenAI Response:', parsedContent)
-      
       if (!parsedContent.headlines || !Array.isArray(parsedContent.headlines)) {
         console.error('Invalid response structure:', parsedContent)
         throw new Error('Response missing headlines array')
