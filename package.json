@@ -2,12 +2,13 @@
   "name": "stock-sentiment-analyzer",
   "version": "0.1.0",
   "private": true,
+  "type": "module",
   "scripts": {
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
     "lint": "next lint",
-    "ingest": "ts-node scripts/ingest-docs.ts"
+    "ingest": "tsx scripts/ingest-docs.ts"
   },
   "dependencies": {
     "@langchain/core": "^0.3.37",
@@ -49,6 +50,7 @@
     "postcss": "^8.5.1",
     "tailwindcss": "^3.4.17",
     "ts-node": "^10.9.2",
+    "tsx": "^4.19.2",
     "typescript": "^5"
   }
 }

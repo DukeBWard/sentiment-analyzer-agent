@@ -1,65 +1,80 @@
 # Stock Sentiment Analyzer 📈
 
-AI-powered stock analysis tool that combines real-time market data with sentiment analysis.
+An AI-powered financial analysis platform that combines real-time market data, SEC filings, and sentiment analysis to provide deep insights into major tech stocks.
 
-Working on agentic additions such as a chat interface and a stock recommendation agent
+## Features
 
-## ✨ Features
+- 🤖 **AI Chat Interface**
+  - Natural language queries about company financials
+  - Context-aware responses from latest 10-K filings
+  - Real-time financial data integration
 
-- 🔄 Real-time stock data and charts
-- 🤖 AI-powered news sentiment analysis
-- 📱 Responsive, modern UI
-- 📊 Interactive stock charts
-- 🎯 Custom stock tracking
-- 📰 News aggregation and scoring
+- 📊 **Market Analysis**
+  - Real-time stock data and interactive charts
+  - Automated sentiment analysis of market news
+  - Custom stock tracking and watchlists
 
-## 🛠️ Built With
+- 📈 **SEC Filing Analysis**
+  - Automated ingestion of 10-K reports
+  - Vector-based semantic search
+  - Intelligent document parsing and chunking
 
-- [Next.js 14](https://nextjs.org/) - React framework
-- [Tailwind CSS](https://tailwindcss.com/) - Styling
-- [shadcn/ui](https://ui.shadcn.com/) - UI components
-- [OpenAI GPT-4o-mini](https://openai.com/) - Sentiment analysis
-- [Yahoo Finance API](https://finance.yahoo.com/) - Market data
+## Tech Stack
 
-## 🚀 Quick Start
+- **Frontend**: Next.js 14, Tailwind CSS, shadcn/ui
+- **AI/ML**: OpenAI GPT-4o-mini, LangChain
+- **Vector DB**: Pinecone
+- **Data Sources**: SEC EDGAR, Yahoo Finance API
 
-```bash
-# Clone the repo
-git clone https://github.com/yourusername/stock-sentiment-analyzer
+## Getting Started
 
-# Install dependencies
-npm install
+1. **Clone the repository**
+   ```bash
+   git clone https://github.com/yourusername/stock-sentiment-analyzer
+   cd stock-sentiment-analyzer
+   ```
 
-# Add environment variables
-cp .env.example .env
-# Add your OpenAI API key to .env
+2. **Install dependencies**
+   ```bash
+   npm install
+   ```
 
-# Run the development server
-npm run dev
-```
+3. **Set up environment variables**
+   ```bash
+   cp .env.example .env
+   ```
+   Required variables:
+   ```env
+   OPENAI_API_KEY=your_openai_api_key
+   PINECONE_API_KEY=your_pinecone_api_key
+   PINECONE_ENVIRONMENT=your_pinecone_environment
+   PINECONE_INDEX=your_pinecone_index
+   ```
 
-## 📝 Environment Variables
+4. **Ingest SEC filings**
+   ```bash
+   npm run ingest
+   ```
 
-```env
-OPENAI_API_KEY=your_openai_api_key
-```
+5. **Start the development server**
+   ```bash
+   npm run dev
+   ```
 
-## 📊 Usage
+## Usage
 
-1. View default tech stock analysis (AAPL, MSFT, GOOGL, etc.)
-2. Add custom stocks to track
-3. Select different timeframes (1d, 5d, 1mo, 1y)
-4. Click on cards for detailed analysis
+1. Select a stock from the dropdown (AAPL, MSFT, GOOGL, AMZN, META)
+2. View real-time market data and sentiment analysis
+3. Use the chat interface to ask questions about the company:
+   - Financial performance
+   - Business operations
+   - Risk factors
+   - Corporate strategy
+   - Market position
 
-## ⚠️ Notes
+## License
 
-- Free tier has rate limits
-- Vercel deployment has 10s timeout
-- OpenAI API costs apply
-
-## 📄 License
-
-MIT
+MIT License - Feel free to use this project for your own purposes.
 
 ---
 Made with ❤️ by [Luke Ward](https://github.com/DukeBWard)

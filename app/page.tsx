@@ -136,13 +136,48 @@ export default function Home() {
     }
   };
 
-  const addCustomTicker = () => {
+  // Add runIngest function
+  const runIngest = async (tickers: string[] = []) => {
+    try {
+      const params = new URLSearchParams();
+      if (tickers.length > 0) {
+        params.append('tickers', tickers.join(','));
+      }
+      
+      const ingestResponse = await fetch(`/api/ingest?${params}`);
+      const ingestData = await ingestResponse.json();
+      
+      // Store the current time as last ingest time
+      localStorage.setItem('lastIngestTime', Date.now().toString());
+      console.log('Document ingestion completed:', {
+        requestId: ingestData.requestId,
+        duration: ingestData.duration,
+        timestamp: new Date().toISOString(),
+        results: ingestData.results
+      });
+
+      return ingestData;
+    } catch (error) {
+      console.error('Error during ingest:', error);
+      throw error;
+    }
+  };
+
+  const addCustomTicker = async () => {
     if (customTicker && !customTickers.includes(customTicker.toUpperCase())) {
-      const newTickers = [...customTickers, customTicker.toUpperCase()];
+      const newTicker = customTicker.toUpperCase();
+      const newTickers = [...customTickers, newTicker];
       setCustomTickers(newTickers);
       localStorage.setItem('customTickers', JSON.stringify(newTickers));
       setCustomTicker('');
-      syncCustomTickers(newTickers);
+      
+      // Run ingest for the new ticker
+      try {
+        await runIngest([newTicker]);
+        syncCustomTickers(newTickers);
+      } catch (error) {
+        console.error('Error processing new ticker:', error);
+      }
     }
   };
 
@@ -232,16 +267,18 @@ export default function Home() {
     setApiCallTime(null) // Reset API call time
     const startTime = Date.now()
     try {
+      // Run ingest first
+      await runIngest(customTickers)
+
       // Get existing analysis from localStorage
       const lastAnalysis = localStorage.getItem('lastAnalysis')
       const existingStocks = lastAnalysis ? JSON.parse(lastAnalysis) : []
       
-      // Find tickers that need analysis (not in existing data)
+      // Find tickers that need analysis
       const existingTickers = existingStocks.map((s: StockSentiment) => s.stock)
       const tickersToAnalyze = [...DEFAULT_TICKERS, ...customTickers].filter(ticker => !existingTickers.includes(ticker))
       
       if (tickersToAnalyze.length === 0) {
-        // If no new tickers, just update the state with existing data
         setStocks(existingStocks)
         setLoading(false)
         return
@@ -282,41 +319,28 @@ export default function Home() {
 
   // Load initial data
   useEffect(() => {
-    setLoading(true) // Set loading state immediately
-    const lastAnalysis = localStorage.getItem('lastAnalysis')
-    const storedCustomTickers = localStorage.getItem('customTickers')
-    const analysisTimestamp = localStorage.getItem('analysisTimestamp')
-    const today = new Date().toDateString()
-    
-    if (storedCustomTickers) {
-      setCustomTickers(JSON.parse(storedCustomTickers))
-    }
-    
-    // Check if analysis is from a previous day
-    if (lastAnalysis && analysisTimestamp && analysisTimestamp === today) {
-      setStocks(JSON.parse(lastAnalysis))
-      setLoading(false)
-    } else {
-      // If no stored analysis or it's old, fetch all tickers
-      const allTickers = [...DEFAULT_TICKERS, ...(storedCustomTickers ? JSON.parse(storedCustomTickers) : [])]
-      const params = new URLSearchParams()
-      params.append('tickers', allTickers.join(','))
-      params.append('range', selectedRange)
-      
-      fetch(`/api/stocks?${params}`)
-        .then(response => response.json())
-        .then(result => {
-          if (!result.error) {
-            setStocks(result.data)
-            localStorage.setItem('lastAnalysis', JSON.stringify(result.data))
-            localStorage.setItem('analysisTimestamp', today)
-            updateRemainingCalls(result.remaining)
-          }
-        })
-        .catch(console.error)
-        .finally(() => setLoading(false))
-    }
-  }, [])
+    const fetchData = async () => {
+      try {
+        setLoading(true);
+        
+        // Always run ingest first
+        console.log('Running document ingestion...');
+        const ingestResponse = await fetch('/api/ingest');
+        const ingestData = await ingestResponse.json();
+        console.log('Document ingestion completed:', ingestData);
+
+        // Then fetch stock data
+        await fetchStocks();
+      } catch (error) {
+        console.error('Error during data fetch:', error);
+        setError('Failed to fetch data');
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    fetchData();
+  }, []); // Empty dependency array means this runs on mount
 
   const formatNumber = (num: number | undefined, decimals: number = 2) => {
     if (num === undefined) return 'N/A'
