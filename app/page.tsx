@@ -94,19 +94,26 @@ export default function Home() {
 
   useEffect(() => {
     const stored = localStorage.getItem('remainingCalls')
-    const lastReset = localStorage.getItem('lastResetDate')
-    const today = new Date().toDateString()
+    const analysisTimestamp = localStorage.getItem('analysisTimestamp')
     const lastAnalysis = localStorage.getItem('lastAnalysis')
+    const now = new Date()
     
-    // Reset if it's a new day
-    if (lastReset !== today) {
+    // Check if analysis is stale (older than 24 hours) or doesn't exist
+    const isStaleAnalysis = !analysisTimestamp || 
+      (new Date(analysisTimestamp).getTime() + 24 * 60 * 60 * 1000) < now.getTime()
+    
+    // Reset if analysis is stale or it's a new day
+    if (isStaleAnalysis || !stored) {
       localStorage.setItem('remainingCalls', '5')
-      localStorage.setItem('lastResetDate', today)
       setRemainingCalls(5)
-    } else if (stored) {
+      // Clear last analysis if stale
+      if (isStaleAnalysis) {
+        localStorage.removeItem('lastAnalysis')
+      }
+    } else {
       setRemainingCalls(parseInt(stored))
-      // Load last analysis if no refreshes left
-      if (parseInt(stored) === 0 && lastAnalysis) {
+      // Load last analysis if it exists and is not stale
+      if (lastAnalysis && !isStaleAnalysis) {
         setStocks(JSON.parse(lastAnalysis))
       }
     }
@@ -121,7 +128,7 @@ export default function Home() {
   const updateRemainingCalls = (count: number) => {
     setRemainingCalls(count)
     localStorage.setItem('remainingCalls', count.toString())
-    localStorage.setItem('lastResetDate', new Date().toDateString())
+    localStorage.setItem('analysisTimestamp', new Date().toISOString())
   }
 
   const syncCustomTickers = async (tickers: string[]) => {
@@ -225,7 +232,7 @@ export default function Home() {
         throw new Error(result.error)
       }
       
-      // Update only the chart data for existing stocks
+      // Update both chart data and current price for existing stocks
       setStocks(prevStocks => 
         prevStocks.map(stock => {
           const updatedStock = result.data.find(s => s.ticker === stock.stock)
@@ -234,7 +241,11 @@ export default function Home() {
               ...stock,
               stockData: stock.stockData ? {
                 ...stock.stockData,
-                chartData: updatedStock.stockData.chartData
+                price: updatedStock.stockData.price,
+                change: updatedStock.stockData.change,
+                changePercent: updatedStock.stockData.changePercent,
+                chartData: updatedStock.stockData.chartData,
+                details: stock.stockData.details // Preserve existing details
               } : updatedStock.stockData
             }
           }
@@ -254,7 +265,28 @@ export default function Home() {
     if (stocks.length > 0) {
       updateGraphs()
     }
-  }, [selectedRange])
+  }, [selectedRange, updateGraphs])
+
+  // Set up automatic refresh interval for stock data
+  useEffect(() => {
+    // Update every minute during market hours
+    const interval = setInterval(() => {
+      const now = new Date()
+      const day = now.getDay()
+      const hour = now.getHours()
+      const minute = now.getMinutes()
+      
+      // Only update during market hours (9:30 AM - 4:00 PM ET, Monday-Friday)
+      const isWeekday = day >= 1 && day <= 5
+      const isMarketHours = (hour > 9 || (hour === 9 && minute >= 30)) && hour < 16
+      
+      if (isWeekday && isMarketHours && stocks.length > 0) {
+        updateGraphs()
+      }
+    }, 60000) // Update every minute
+
+    return () => clearInterval(interval)
+  }, [stocks.length, updateGraphs])
 
   const fetchStocks = useCallback(async () => {
     const currentRemaining = parseInt(localStorage.getItem('remainingCalls') || '5')
