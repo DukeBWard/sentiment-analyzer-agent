@@ -23,6 +23,7 @@ import {
 } from "@/components/ui/table"
 import { Skeleton } from "@/components/ui/skeleton"
 import { X } from 'lucide-react';
+import { ChatInterface } from '@/components/chat-interface';
 
 type StockDetails = {
   marketCap?: number
@@ -109,6 +110,12 @@ export default function Home() {
         setStocks(JSON.parse(lastAnalysis))
       }
     }
+
+    // Load custom tickers from localStorage
+    const storedTickers = localStorage.getItem('customTickers')
+    if (storedTickers) {
+      setCustomTickers(JSON.parse(storedTickers))
+    }
   }, [])
 
   const updateRemainingCalls = (count: number) => {
@@ -117,30 +124,87 @@ export default function Home() {
     localStorage.setItem('lastResetDate', new Date().toDateString())
   }
 
-  const addCustomTicker = () => {
-    if (customTicker && !customTickers.includes(customTicker.toUpperCase())) {
-      const newTickers = [...customTickers, customTicker.toUpperCase()]
-      setCustomTickers(newTickers)
-      localStorage.setItem('customTickers', JSON.stringify(newTickers))
-      setCustomTicker('')
+  const syncCustomTickers = async (tickers: string[]) => {
+    try {
+      const response = await fetch('/api/sync-tickers', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ customTickers: tickers }),
+      });
+      
+      if (!response.ok) {
+        throw new Error('Failed to sync tickers');
+      }
+    } catch (error) {
+      console.error('Error syncing tickers:', error);
     }
-  }
+  };
+
+  // Add runIngest function
+  const runIngest = async (tickers: string[] = []) => {
+    try {
+      const params = new URLSearchParams();
+      if (tickers.length > 0) {
+        params.append('tickers', tickers.join(','));
+      }
+      
+      const ingestResponse = await fetch(`/api/ingest?${params}`);
+      const ingestData = await ingestResponse.json();
+      
+      // Store the current time as last ingest time
+      localStorage.setItem('lastIngestTime', Date.now().toString());
+      console.log('Document ingestion completed:', {
+        requestId: ingestData.requestId,
+        duration: ingestData.duration,
+        timestamp: new Date().toISOString(),
+        results: ingestData.results
+      });
+
+      return ingestData;
+    } catch (error) {
+      console.error('Error during ingest:', error);
+      throw error;
+    }
+  };
+
+  const addCustomTicker = async () => {
+    if (customTicker && !customTickers.includes(customTicker.toUpperCase())) {
+      const newTicker = customTicker.toUpperCase();
+      const newTickers = [...customTickers, newTicker];
+      setCustomTickers(newTickers);
+      localStorage.setItem('customTickers', JSON.stringify(newTickers));
+      setCustomTicker('');
+      
+      // Run ingest for the new ticker
+      try {
+        await runIngest([newTicker]);
+        syncCustomTickers(newTickers);
+      } catch (error) {
+        console.error('Error processing new ticker:', error);
+      }
+    }
+  };
 
   const removeCustomTicker = (ticker: string) => {
-    const newTickers = customTickers.filter(t => t !== ticker)
-    setCustomTickers(newTickers)
-    localStorage.setItem('customTickers', JSON.stringify(newTickers))
+    const newTickers = customTickers.filter(t => t !== ticker);
+    setCustomTickers(newTickers);
+    localStorage.setItem('customTickers', JSON.stringify(newTickers));
     
     // Remove the stock from display and localStorage
-    const updatedStocks = stocks.filter(s => s.stock !== ticker || DEFAULT_TICKERS.includes(s.stock))
-    setStocks(updatedStocks)
-    localStorage.setItem('lastAnalysis', JSON.stringify(updatedStocks))
+    const updatedStocks = stocks.filter(s => s.stock !== ticker || DEFAULT_TICKERS.includes(s.stock));
+    setStocks(updatedStocks);
+    localStorage.setItem('lastAnalysis', JSON.stringify(updatedStocks));
     
     // Close modal if the removed stock was selected
     if (selectedStock?.stock === ticker) {
-      setSelectedStock(null)
+      setSelectedStock(null);
     }
-  }
+
+    // Sync with backend
+    syncCustomTickers(newTickers);
+  };
 
   const updateGraphs = useCallback(async () => {
     setLoading(true)
@@ -209,16 +273,18 @@ export default function Home() {
     setApiCallTime(null) // Reset API call time
     const startTime = Date.now()
     try {
+      // Run ingest first
+      await runIngest(customTickers)
+
       // Get existing analysis from localStorage
       const lastAnalysis = localStorage.getItem('lastAnalysis')
       const existingStocks = lastAnalysis ? JSON.parse(lastAnalysis) : []
       
-      // Find tickers that need analysis (not in existing data)
+      // Find tickers that need analysis
       const existingTickers = existingStocks.map((s: StockSentiment) => s.stock)
       const tickersToAnalyze = [...DEFAULT_TICKERS, ...customTickers].filter(ticker => !existingTickers.includes(ticker))
       
       if (tickersToAnalyze.length === 0) {
-        // If no new tickers, just update the state with existing data
         setStocks(existingStocks)
         setLoading(false)
         return
@@ -259,41 +325,28 @@ export default function Home() {
 
   // Load initial data
   useEffect(() => {
-    setLoading(true) // Set loading state immediately
-    const lastAnalysis = localStorage.getItem('lastAnalysis')
-    const storedCustomTickers = localStorage.getItem('customTickers')
-    const analysisTimestamp = localStorage.getItem('analysisTimestamp')
-    const today = new Date().toDateString()
-    
-    if (storedCustomTickers) {
-      setCustomTickers(JSON.parse(storedCustomTickers))
-    }
-    
-    // Check if analysis is from a previous day
-    if (lastAnalysis && analysisTimestamp && analysisTimestamp === today) {
-      setStocks(JSON.parse(lastAnalysis))
-      setLoading(false)
-    } else {
-      // If no stored analysis or it's old, fetch all tickers
-      const allTickers = [...DEFAULT_TICKERS, ...(storedCustomTickers ? JSON.parse(storedCustomTickers) : [])]
-      const params = new URLSearchParams()
-      params.append('tickers', allTickers.join(','))
-      params.append('range', selectedRange)
-      
-      fetch(`/api/stocks?${params}`)
-        .then(response => response.json())
-        .then(result => {
-          if (!result.error) {
-            setStocks(result.data)
-            localStorage.setItem('lastAnalysis', JSON.stringify(result.data))
-            localStorage.setItem('analysisTimestamp', today)
-            updateRemainingCalls(result.remaining)
-          }
-        })
-        .catch(console.error)
-        .finally(() => setLoading(false))
-    }
-  }, [])
+    const fetchData = async () => {
+      try {
+        setLoading(true);
+        
+        // Always run ingest first
+        console.log('Running document ingestion...');
+        const ingestResponse = await fetch('/api/ingest');
+        const ingestData = await ingestResponse.json();
+        console.log('Document ingestion completed:', ingestData);
+
+        // Then fetch stock data
+        await fetchStocks();
+      } catch (error) {
+        console.error('Error during data fetch:', error);
+        setError('Failed to fetch data');
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    fetchData();
+  }, []); // Empty dependency array means this runs on mount
 
   const formatNumber = (num: number | undefined, decimals: number = 2) => {
     if (num === undefined) return 'N/A'
@@ -314,7 +367,7 @@ export default function Home() {
   }
 
   const LoadingSkeleton = () => (
-    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
       {[1, 2, 3].map((i) => (
         <div key={i} className="bg-gray-900/50 backdrop-blur-sm border border-gray-700 rounded-lg p-4">
           <div className="flex justify-between items-center mb-4">
@@ -417,76 +470,83 @@ export default function Home() {
           <div className="text-red-500 mb-4 font-jetbrains text-sm sm:text-base">{error}</div>
         )}
 
-        {loading ? (
-          <LoadingSkeleton />
-        ) : (
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-            {stocks.map((stock) => (
-              <Card 
-                key={stock.stock} 
-                className="overflow-hidden cursor-pointer hover:shadow-lg transition-shadow bg-gray-900/50 backdrop-blur-sm border-gray-700 hover:border-gray-600"
-                onClick={() => setSelectedStock(stock)}
-              >
-                <CardHeader className="pb-2">
-                  <div className="flex justify-between items-center">
-                    <CardTitle className="text-lg sm:text-xl text-white font-jetbrains">{stock.stock}</CardTitle>
-                    {stock.stockData && (
-                      <div className={`text-xs sm:text-sm font-jetbrains ${stock.stockData.change >= 0 ? 'text-green-400' : 'text-red-400'}`}>
-                        ${stock.stockData.price.toFixed(2)}
-                        <span className="ml-1 sm:ml-2">
-                          {stock.stockData.change >= 0 ? '▲' : '▼'} 
-                          {Math.abs(stock.stockData.changePercent).toFixed(2)}%
+        <div className="grid grid-cols-1 2xl:grid-cols-5 gap-8">
+          {/* Stock Cards Section */}
+          <div className="2xl:col-span-3">
+            {loading ? (
+              <LoadingSkeleton />
+            ) : (
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                {stocks.map((stock) => (
+                  <Card 
+                    key={stock.stock} 
+                    className="overflow-hidden cursor-pointer hover:shadow-lg transition-shadow bg-gray-900/50 backdrop-blur-sm border-gray-700 hover:border-gray-600"
+                    onClick={() => setSelectedStock(stock)}
+                  >
+                    <CardHeader className="pb-2">
+                      <div className="flex justify-between items-center">
+                        <CardTitle className="text-lg sm:text-xl text-white font-jetbrains">{stock.stock}</CardTitle>
+                        {stock.stockData && (
+                          <div className={`text-xs sm:text-sm font-jetbrains ${stock.stockData.change >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+                            ${stock.stockData.price.toFixed(2)}
+                            <span className="ml-1 sm:ml-2">
+                              {stock.stockData.change >= 0 ? '▲' : '▼'} 
+                              {Math.abs(stock.stockData.changePercent).toFixed(2)}%
+                            </span>
+                          </div>
+                        )}
+                      </div>
+                    </CardHeader>
+                    <CardContent>
+                      {stock.stockData && (
+                        <div className="h-28 mb-4">
+                          <ResponsiveContainer width="100%" height="100%">
+                            <LineChart data={stock.stockData.chartData}>
+                              <Line
+                                type="monotone"
+                                dataKey="price"
+                                stroke={stock.stockData.change >= 0 ? '#4ade80' : '#f87171'}
+                                dot={false}
+                              />
+                              <XAxis dataKey="timestamp" hide />
+                              <YAxis domain={['auto', 'auto']} hide />
+                              <Tooltip
+                                formatter={(value: FormatterValue) => [`$${value}`, 'Price']}
+                                labelFormatter={(label) => new Date(label).toLocaleTimeString()}
+                                contentStyle={{ backgroundColor: '#1f2937', border: 'none', borderRadius: '0.375rem' }}
+                                itemStyle={{ color: '#e5e7eb' }}
+                                labelStyle={{ color: '#e5e7eb' }}
+                              />
+                            </LineChart>
+                          </ResponsiveContainer>
+                        </div>
+                      )}
+                      <div className={`text-center p-2 rounded-md font-jetbrains ${
+                        !stock.articles?.length || stock.sentimentScore === 0 ? 'bg-gray-800/50' :
+                        stock.sentimentScore > 0 ? 'bg-green-900/50' : 'bg-red-900/50'
+                      }`}>
+                        <span className={`font-semibold ${
+                          !stock.articles?.length || stock.sentimentScore === 0 ? 'text-gray-400' :
+                          stock.sentimentScore > 0 ? 'text-green-400' : 'text-red-400'
+                        }`}>
+                          {!stock.articles?.length || stock.sentimentScore === 0 ? 
+                            'Not enough data' : 
+                            `Sentiment Score: ${stock.sentimentScore.toFixed(2)}`
+                          }
                         </span>
                       </div>
-                    )}
-                  </div>
-                </CardHeader>
-                <CardContent>
-                  {stock.stockData && (
-                    <div className="h-32 mb-4">
-                      <ResponsiveContainer width="100%" height="100%">
-                        <LineChart data={stock.stockData.chartData}>
-                          <Line
-                            type="monotone"
-                            dataKey="price"
-                            stroke={stock.stockData.change >= 0 ? '#4ade80' : '#f87171'}
-                            dot={false}
-                          />
-                          <XAxis
-                            dataKey="timestamp"
-                            hide
-                          />
-                          <YAxis domain={['auto', 'auto']} hide />
-                          <Tooltip
-                            formatter={(value: FormatterValue) => [`$${value}`, 'Price']}
-                            labelFormatter={(label) => new Date(label).toLocaleTimeString()}
-                            contentStyle={{ backgroundColor: '#1f2937', border: 'none', borderRadius: '0.375rem' }}
-                            itemStyle={{ color: '#e5e7eb' }}
-                            labelStyle={{ color: '#e5e7eb' }}
-                          />
-                        </LineChart>
-                      </ResponsiveContainer>
-                    </div>
-                  )}
-                  <div className={`text-center p-2 rounded-md font-jetbrains ${
-                    !stock.articles?.length || stock.sentimentScore === 0 ? 'bg-gray-800/50' :
-                    stock.sentimentScore > 0 ? 'bg-green-900/50' : 'bg-red-900/50'
-                  }`}>
-                    <span className={`font-semibold ${
-                      !stock.articles?.length || stock.sentimentScore === 0 ? 'text-gray-400' :
-                      stock.sentimentScore > 0 ? 'text-green-400' : 'text-red-400'
-                    }`}>
-                      {!stock.articles?.length || stock.sentimentScore === 0 ? 
-                        'Not enough data' : 
-                        `Sentiment Score: ${stock.sentimentScore.toFixed(2)}`
-                      }
-                    </span>
-                  </div>
-                </CardContent>
-              </Card>
-            ))}
+                    </CardContent>
+                  </Card>
+                ))}
+              </div>
+            )}
           </div>
-        )}
+
+          {/* Chat Interface Section */}
+          <div className="2xl:col-span-2 2xl:sticky 2xl:top-8">
+            <ChatInterface stocks={stocks} />
+          </div>
+        </div>
 
         <Dialog open={!!selectedStock} onOpenChange={() => setSelectedStock(null)}>
           <DialogContent className="max-w-[95vw] sm:max-w-4xl max-h-[90vh] overflow-y-auto bg-gray-900 text-white border-gray-700">
@@ -501,9 +561,9 @@ export default function Home() {
                           variant="ghost"
                           size="sm"
                           onClick={(e) => {
-                            e.stopPropagation()
-                            removeCustomTicker(selectedStock.stock)
-                            setSelectedStock(null)
+                            e.stopPropagation();
+                            removeCustomTicker(selectedStock.stock);
+                            setSelectedStock(null);
                           }}
                           className="text-gray-400 hover:text-red-400 transition-colors"
                         >
@@ -587,7 +647,7 @@ export default function Home() {
                     </span>
                   </div>
 
-                  <div className="max-h-[300px] overflow-y-auto">
+                  <div className="max-h-[300px] overflow-y-auto mt-4">
                     <Table>
                       <TableHeader>
                         <TableRow className="border-gray-700">
@@ -630,5 +690,5 @@ export default function Home() {
         </Dialog>
       </div>
     </div>
-  )
+  );
 }
