@@ -52,7 +52,7 @@ export async function POST(req: Request) {
       streaming: true,
     });
 
-    const prompt = PromptTemplate.fromTemplate(`Answer the following question about ${ticker.toUpperCase()} based on the provided context:
+    const prompt = PromptTemplate.fromTemplate(`Do not use markdown.  Answer the following question about ${ticker.toUpperCase()} based on the provided context:
 
 Context: {context}
 Question: {input}
@@ -64,7 +64,7 @@ Answer: `);
       prompt,
     });
 
-    const retriever = vectorStore.asRetriever(20);
+    const retriever = vectorStore.asRetriever(50);
     const retrievalChain = await createRetrievalChain({
       combineDocsChain: documentChain,
       retriever,
