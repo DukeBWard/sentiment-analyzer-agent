@@ -110,6 +110,12 @@ export default function Home() {
         setStocks(JSON.parse(lastAnalysis))
       }
     }
+
+    // Load custom tickers from localStorage
+    const storedTickers = localStorage.getItem('customTickers')
+    if (storedTickers) {
+      setCustomTickers(JSON.parse(storedTickers))
+    }
   }, [])
 
   const updateRemainingCalls = (count: number) => {
