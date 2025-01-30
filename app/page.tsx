@@ -97,7 +97,6 @@ export default function Home() {
     const analysisTimestamp = localStorage.getItem('analysisTimestamp')
     const lastAnalysis = localStorage.getItem('lastAnalysis')
     const now = new Date()
-    const today = now.toDateString()
     
     // Check if analysis is stale (older than 24 hours) or doesn't exist
     const isStaleAnalysis = !analysisTimestamp || 
