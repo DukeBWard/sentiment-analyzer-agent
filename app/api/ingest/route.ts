@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { createIngestor, DEFAULT_TICKERS } from '@/scripts/ingest-docs';
+import { createIngestor } from '@/scripts/ingest-docs';
 
 // Initialize environment variables check
 if (!process.env.OPENAI_API_KEY) {
