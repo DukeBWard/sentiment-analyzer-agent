@@ -2,7 +2,7 @@
 
 AI-powered stock analysis tool that combines real-time market data with sentiment analysis.
 
-Working on agentic additions
+Working on agentic additions such as a chat interface and a stock recommendation agent
 
 ## ✨ Features
 
