@@ -470,9 +470,9 @@ export default function Home() {
           <div className="text-red-500 mb-4 font-jetbrains text-sm sm:text-base">{error}</div>
         )}
 
-        <div className="grid grid-cols-1 xl:grid-cols-3 gap-8">
+        <div className="grid grid-cols-1 2xl:grid-cols-5 gap-8">
           {/* Stock Cards Section */}
-          <div className="xl:col-span-2">
+          <div className="2xl:col-span-3">
             {loading ? (
               <LoadingSkeleton />
             ) : (
@@ -543,7 +543,7 @@ export default function Home() {
           </div>
 
           {/* Chat Interface Section */}
-          <div className="xl:sticky xl:top-8">
+          <div className="2xl:col-span-2 2xl:sticky 2xl:top-8">
             <ChatInterface stocks={stocks} />
           </div>
         </div>
