@@ -187,7 +187,6 @@ export default function Home() {
       // Run ingest for the new ticker
       try {
         await runIngest([newTicker]);
-        syncCustomTickers(newTickers);
       } catch (error) {
         console.error('Error processing new ticker:', error);
       }
@@ -208,9 +207,6 @@ export default function Home() {
     if (selectedStock?.stock === ticker) {
       setSelectedStock(null);
     }
-
-    // Sync with backend
-    syncCustomTickers(newTickers);
   };
 
   const updateGraphs = useCallback(async () => {
