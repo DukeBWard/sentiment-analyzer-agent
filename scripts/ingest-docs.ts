@@ -43,6 +43,7 @@ class DocumentIngestor {
   private readonly CHUNK_SIZE = 2000;
   private readonly CHUNK_OVERLAP = 400;
   private vectorStore: PineconeStore;
+  private customTickers: string[] = [];
 
   constructor(vectorStore: PineconeStore) {
     this.vectorStore = vectorStore;
@@ -175,34 +176,15 @@ class DocumentIngestor {
 
   async getAllTickers(): Promise<string[]> {
     try {
-      const configPath = './config.json';
-      let customTickers: string[] = [];
-      
-      if (fs.existsSync(configPath)) {
-        const config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
-        customTickers = config.customTickers || [];
-      }
-
-      return [...new Set([...DEFAULT_TICKERS, ...customTickers])];
+      return [...new Set([...DEFAULT_TICKERS, ...this.customTickers])];
     } catch (error) {
-      console.warn('Error reading custom tickers:', error);
+      console.warn('Error getting tickers:', error);
       return DEFAULT_TICKERS;
     }
   }
 
   async updateCustomTickers(tickers: string[]): Promise<void> {
-    try {
-      const configPath = './config.json';
-      const config = fs.existsSync(configPath) 
-        ? JSON.parse(fs.readFileSync(configPath, 'utf8'))
-        : {};
-      
-      config.customTickers = tickers;
-      fs.writeFileSync(configPath, JSON.stringify(config, null, 2));
-    } catch (error) {
-      console.error('Error updating custom tickers:', error);
-      throw error;
-    }
+    this.customTickers = tickers;
   }
 }
 

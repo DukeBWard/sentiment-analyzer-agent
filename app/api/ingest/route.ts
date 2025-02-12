@@ -19,7 +19,7 @@ export async function GET(req: Request) {
   const startTime = Date.now();
   const requestId = Math.random().toString(36).substring(7);
   
-  // Get custom tickers from URL params and update config
+  // Get custom tickers from URL params
   const { searchParams } = new URL(req.url);
   const customTickers = searchParams.get('tickers')?.split(',').filter(Boolean) || [];
   

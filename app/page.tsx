@@ -131,23 +131,23 @@ export default function Home() {
     localStorage.setItem('analysisTimestamp', new Date().toISOString())
   }
 
-  const syncCustomTickers = async (tickers: string[]) => {
-    try {
-      const response = await fetch('/api/sync-tickers', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ customTickers: tickers }),
-      });
+  // const syncCustomTickers = async (tickers: string[]) => {
+  //   try {
+  //     const response = await fetch('/api/sync-tickers', {
+  //       method: 'POST',
+  //       headers: {
+  //         'Content-Type': 'application/json',
+  //       },
+  //       body: JSON.stringify({ customTickers: tickers }),
+  //     });
       
-      if (!response.ok) {
-        throw new Error('Failed to sync tickers');
-      }
-    } catch (error) {
-      console.error('Error syncing tickers:', error);
-    }
-  };
+  //     if (!response.ok) {
+  //       throw new Error('Failed to sync tickers');
+  //     }
+  //   } catch (error) {
+  //     console.error('Error syncing tickers:', error);
+  //   }
+  // };
 
   // Add runIngest function
   const runIngest = async (tickers: string[] = []) => {
@@ -187,7 +187,6 @@ export default function Home() {
       // Run ingest for the new ticker
       try {
         await runIngest([newTicker]);
-        syncCustomTickers(newTickers);
       } catch (error) {
         console.error('Error processing new ticker:', error);
       }
@@ -208,9 +207,6 @@ export default function Home() {
     if (selectedStock?.stock === ticker) {
       setSelectedStock(null);
     }
-
-    // Sync with backend
-    syncCustomTickers(newTickers);
   };
 
   const updateGraphs = useCallback(async () => {
